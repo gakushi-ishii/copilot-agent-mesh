@@ -62,19 +62,22 @@ Do NOT implement tasks yourself. Delegate everything to teammates.
 When you receive messages from teammates with their results, acknowledge and integrate them.
 
 ## Model Selection Guide
-When spawning a teammate, choose the appropriate model based on the task:
+When spawning a teammate, you MUST choose the model via the \`model\` parameter.
+Pick the best model for each teammate's task:
 
-| Model             | Best for                                                         |
-|-------------------|------------------------------------------------------------------|
-| claude-opus-4.6   | Complex reasoning, architecture design, security analysis, deep debugging |
-| claude-sonnet-4   | Code generation, code review, testing, research & analysis       |
-| claude-haiku-3.5  | Documentation, formatting, translation, simple/repetitive tasks  |
+| Model              | Best for                                                          |
+|--------------------|-------------------------------------------------------------------|
+| claude-opus-4.6    | Complex multi-step reasoning, architecture, security, deep debugging |
+| claude-sonnet-4.6  | Code generation, code review, testing, research & analysis (recommended default) |
+| gpt-5.3-codex      | Large-scale code generation, multi-file refactoring, bulk edits   |
+| claude-haiku-3.5   | Documentation, formatting, translation, simple/repetitive tasks   |
 
 **Guidelines:**
-- Default to **claude-sonnet-4** for most coding tasks — it is fast and capable.
+- Default to **claude-sonnet-4.6** for most tasks — it is fast, capable, and cost-effective.
 - Use **claude-opus-4.6** only when the task requires deep, multi-step reasoning or security-critical judgment.
-- Use **claude-haiku-3.5** for high-volume, low-complexity work to maximise speed and efficiency.
-- If unsure, omit the model parameter and the system will auto-select.
+- Use **gpt-5.3-codex** for large-scale code generation or multi-file refactoring tasks.
+- Use **claude-haiku-3.5** for high-volume, low-complexity work to maximise speed.
+- Always specify a model — do not omit it.
 `;
   }
 

@@ -26,49 +26,8 @@ export interface OrchestratorConfig {
   onLog?: (level: "info" | "debug" | "warn" | "error", msg: string) => void;
 }
 
-// ── Role-based Model Selection ─────────────────────────────────────
-//
-// Maps teammate specialty keywords to the most cost-effective model
-// that still meets quality requirements. The Lead always uses the
-// configured top-tier model (claude-opus-4.6 by default).
-
-const MODEL_RULES: { match: RegExp; model: string; reason: string }[] = [
-  // Heavy reasoning / architecture / complex analysis → top-tier
-  { match: /architect|design|plan|strateg/i,          model: "claude-opus-4.6",   reason: "complex reasoning" },
-  { match: /security|vulnerabilit|threat|pentest/i,   model: "claude-opus-4.6",   reason: "security-critical analysis" },
-  { match: /debug|investigat|root.cause/i,            model: "claude-opus-4.6",   reason: "deep debugging" },
-
-  // Code generation / review / refactoring → strong coding model
-  { match: /code|implement|develop|engineer|refactor/i, model: "claude-sonnet-4",  reason: "code generation" },
-  { match: /review|audit|quality/i,                     model: "claude-sonnet-4",  reason: "code review" },
-  { match: /test|qa|testing/i,                          model: "claude-sonnet-4",  reason: "test authoring" },
-
-  // Writing / documentation / summarisation → fast model
-  { match: /writ|document|readme|summar|report/i,       model: "claude-haiku-3.5", reason: "documentation" },
-  { match: /format|lint|style|translate/i,               model: "claude-haiku-3.5", reason: "formatting / translation" },
-
-  // Research / data gathering → balanced model
-  { match: /research|analys|data|metric|benchmark/i,    model: "claude-sonnet-4",  reason: "analysis & research" },
-];
-
-/**
- * Select the best model for a teammate based on its role/specialty.
- * Falls back to the configured default model if no rule matches.
- */
-function selectModelForRole(
-  role: string,
-  defaultModel: string,
-  log?: (level: "info" | "debug" | "warn" | "error", msg: string) => void,
-): string {
-  for (const rule of MODEL_RULES) {
-    if (rule.match.test(role)) {
-      log?.("info", `Model auto-select: "${role}" → ${rule.model} (${rule.reason})`);
-      return rule.model;
-    }
-  }
-  log?.("info", `Model auto-select: "${role}" → ${defaultModel} (default fallback)`);
-  return defaultModel;
-}
+/** Default model for teammate agents when the Lead does not specify one. */
+const DEFAULT_TEAMMATE_MODEL = "claude-sonnet-4.6";
 
 export class Orchestrator {
   private client: CopilotClient;
@@ -147,13 +106,14 @@ export class Orchestrator {
     const id = `teammate-${++this.agentCounter}-${name}`;
     const info: AgentInfo = { id, name, role: "teammate", specialty: role };
 
-    // Auto-select model based on role unless the Lead explicitly chose one
-    const selectedModel =
-      model ?? selectModelForRole(role, this.config.model, this.config.onLog);
-
-    if (model) {
-      this.log("info", `Lead chose model "${model}" for teammate "${name}" (${role})`);
-    }
+    // Use the model chosen by the Lead, or fall back to the default teammate model
+    const selectedModel = model ?? DEFAULT_TEAMMATE_MODEL;
+    this.log(
+      "info",
+      model
+        ? `Lead chose model "${model}" for teammate "${name}" (${role})`
+        : `Using default teammate model "${selectedModel}" for "${name}" (${role})`,
+    );
 
     const agent = await this.createAgent(info, selectedModel);
 
