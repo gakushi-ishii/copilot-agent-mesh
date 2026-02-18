@@ -7,7 +7,7 @@
  */
 import { CopilotClient } from "@github/copilot-sdk";
 import { MessageBus } from "./message-bus.js";
-import { createAgentTools, createLeadTools } from "./agent-tools.js";
+import { createAgentTools, createLeadTools, type ToolLogger } from "./agent-tools.js";
 import {
   buildSystemMessage,
   type AgentInfo,
@@ -22,6 +22,8 @@ export interface OrchestratorConfig {
   pollIntervalMs?: number;
   /** Enable streaming output (default: true) */
   streaming?: boolean;
+  /** Maximum turns per agent before forced stop (default: 20) */
+  maxTurnsPerAgent?: number;
   /** Log callback for debug output */
   onLog?: (level: "info" | "debug" | "warn" | "error", msg: string) => void;
 }
@@ -36,12 +38,15 @@ export class Orchestrator {
   private config: Required<OrchestratorConfig>;
   private agentCounter = 0;
   private running = false;
+  /** Per-agent turn counter for loop prevention */
+  private turnCounts = new Map<string, number>();
 
   constructor(config?: OrchestratorConfig) {
     this.config = {
       model: config?.model ?? "claude-opus-4.6",
       pollIntervalMs: config?.pollIntervalMs ?? 2000,
       streaming: config?.streaming ?? true,
+      maxTurnsPerAgent: config?.maxTurnsPerAgent ?? 20,
       onLog: config?.onLog ?? (() => {}),
     };
     this.client = new CopilotClient();
@@ -76,6 +81,7 @@ export class Orchestrator {
       }
     }
     this.agents.clear();
+    this.turnCounts.clear();
 
     await this.client.stop();
     this.bus.reset();
@@ -128,10 +134,12 @@ export class Orchestrator {
     const resolvedModel = model ?? this.config.model;
     info.model = resolvedModel;
     this.bus.registerAgent(info.id);
+    this.turnCounts.set(info.id, 0);
     const teamSize = this.agents.size + 1;
 
-    // Build tools for this agent
-    const baseTools = createAgentTools(info.id, this.bus);
+    // Build tools for this agent, passing the logger for visibility
+    const toolLogger: ToolLogger = (level, msg) => this.log(level, msg);
+    const baseTools = createAgentTools(info.id, this.bus, toolLogger);
     const tools =
       info.role === "lead"
         ? [
@@ -144,7 +152,7 @@ export class Orchestrator {
               onShutdownTeammate: async (teammateId) => {
                 await this.shutdownAgent(teammateId);
               },
-            }),
+            }, toolLogger),
           ]
         : baseTools;
 
@@ -165,23 +173,40 @@ export class Orchestrator {
 
     this.agents.set(info.id, agent);
 
-    // Set up streaming output
+    // Set up streaming output — only print prefix at the start of each new line
+    let atLineStart = true;
+    const prefix = `\x1b[35m[${info.name}]\x1b[0m `;
+
     session.on("assistant.message_delta", (event: any) => {
       if (this.config.streaming) {
-        const prefix = `[${info.name}] `;
-        process.stdout.write(
-          event.data.deltaContent
-            ? prefix + event.data.deltaContent.replace(/\n/g, `\n${prefix}`)
-            : "",
-        );
+        const delta =
+          event?.data?.deltaContent ??
+          event?.delta?.content ??
+          event?.content ??
+          (typeof event === "string" ? event : "");
+        if (delta) {
+          let output = "";
+          for (const ch of delta) {
+            if (atLineStart) {
+              output += prefix;
+              atLineStart = false;
+            }
+            output += ch;
+            if (ch === "\n") {
+              atLineStart = true;
+            }
+          }
+          process.stdout.write(output);
+        }
       }
     });
 
-    session.on("assistant.message", (event: any) => {
+    session.on("assistant.message", () => {
       if (this.config.streaming) {
         process.stdout.write("\n");
+        atLineStart = true;
       }
-      this.log("debug", `[${info.name}] turn complete`);
+      this.log("info", `[${info.name}] turn complete`);
     });
 
     // Start message polling for this agent
@@ -201,6 +226,7 @@ export class Orchestrator {
     await agent.session.destroy();
     this.bus.unregisterAgent(agentId);
     this.agents.delete(agentId);
+    this.turnCounts.delete(agentId);
     this.log("info", `Agent "${agent.info.name}" shut down.`);
   }
 
@@ -215,9 +241,27 @@ export class Orchestrator {
     agent.pollHandle = setInterval(async () => {
       if (!this.running || agent.busy) return;
 
+      // Check turn limit
+      const turns = this.turnCounts.get(agent.info.id) ?? 0;
+      if (turns >= this.config.maxTurnsPerAgent) {
+        this.log(
+          "warn",
+          `[${agent.info.name}] reached max turns (${this.config.maxTurnsPerAgent}), skipping further messages`,
+        );
+        return;
+      }
+
       if (this.bus.hasUnreadMessages(agent.info.id)) {
         const msgs = this.bus.readMessages(agent.info.id);
         if (msgs.length === 0) return;
+
+        // Log each delivered message for visibility
+        for (const m of msgs) {
+          this.log(
+            "info",
+            `📨 Delivering message to [${agent.info.name}] from [${m.from}]: ${m.content.slice(0, 100)}`,
+          );
+        }
 
         const formatted = msgs
           .map(
@@ -237,12 +281,28 @@ export class Orchestrator {
    * Send a prompt to an agent's session, with busy-state tracking.
    */
   private async sendToAgent(agent: ManagedAgent, prompt: string): Promise<void> {
+    // Check turn limit
+    const turns = this.turnCounts.get(agent.info.id) ?? 0;
+    if (turns >= this.config.maxTurnsPerAgent) {
+      this.log(
+        "warn",
+        `[${agent.info.name}] max turns (${this.config.maxTurnsPerAgent}) reached — message dropped`,
+      );
+      return;
+    }
+
     if (agent.busy) {
-      this.log("debug", `[${agent.info.name}] busy, enqueueing message`);
+      this.log("info", `[${agent.info.name}] busy, enqueueing message`);
       // Enqueue using the SDK's enqueue mode
       await agent.session.send({ prompt, mode: "enqueue" } as any);
       return;
     }
+
+    this.turnCounts.set(agent.info.id, turns + 1);
+    this.log(
+      "info",
+      `[${agent.info.name}] ▶ turn ${turns + 1}/${this.config.maxTurnsPerAgent}: ${prompt.slice(0, 100)}...`,
+    );
 
     agent.busy = true;
     try {

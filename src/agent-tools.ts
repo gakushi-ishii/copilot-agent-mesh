@@ -7,11 +7,17 @@ import { z } from "zod";
 import { defineTool } from "@github/copilot-sdk";
 import type { MessageBus } from "./message-bus.js";
 
+/** Log callback type for tool activity visibility */
+export type ToolLogger = (level: "info" | "debug" | "warn" | "error", msg: string) => void;
+
+/** No-op logger as default */
+const noop: ToolLogger = () => {};
+
 /**
  * Creates the set of communication tools for a given agent.
  * Each tool closure captures the agentId and the shared MessageBus.
  */
-export function createAgentTools(agentId: string, bus: MessageBus) {
+export function createAgentTools(agentId: string, bus: MessageBus, onLog: ToolLogger = noop) {
   return [
     // ── send_message ──────────────────────────────────────────────
     defineTool("send_message", {
@@ -22,10 +28,12 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
         content: z.string().describe("The message content"),
       }),
       handler: async ({ to, content }) => {
+        onLog("info", `[${agentId}] 📤 send_message → ${to}: ${content.slice(0, 120)}`);
         try {
           const msg = bus.sendMessage(agentId, to, content);
           return { success: true, messageId: msg.id };
         } catch (err: any) {
+          onLog("error", `[${agentId}] send_message failed: ${err.message}`);
           return { success: false, error: err.message };
         }
       },
@@ -39,6 +47,7 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
         content: z.string().describe("The message to broadcast"),
       }),
       handler: async ({ content }) => {
+        onLog("info", `[${agentId}] 📢 broadcast: ${content.slice(0, 120)}`);
         const msg = bus.sendMessage(agentId, "*", content);
         return { success: true, messageId: msg.id };
       },
@@ -51,6 +60,7 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
       parameters: z.object({}),
       handler: async () => {
         const msgs = bus.readMessages(agentId);
+        onLog("info", `[${agentId}] 📬 read_messages: ${msgs.length} unread`);
         if (msgs.length === 0) {
           return { messages: [], note: "No unread messages." };
         }
@@ -80,6 +90,7 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
           .describe("Task IDs that must complete before this task can start"),
       }),
       handler: async ({ description, assignee, dependsOn }) => {
+        onLog("info", `[${agentId}] 📋 create_task: "${description.slice(0, 80)}" → ${assignee ?? "unassigned"}`);
         const task = bus.createTask(description, agentId, {
           assignee,
           dependsOn,
@@ -96,10 +107,12 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
         taskId: z.string().describe("The ID of the task to claim"),
       }),
       handler: async ({ taskId }) => {
+        onLog("info", `[${agentId}] 🙋 claim_task: ${taskId}`);
         try {
           const task = bus.claimTask(taskId, agentId);
           return { success: true, task: { id: task.id, description: task.description } };
         } catch (err: any) {
+          onLog("warn", `[${agentId}] claim_task failed: ${err.message}`);
           return { success: false, error: err.message };
         }
       },
@@ -114,10 +127,12 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
         result: z.string().describe("Summary of what was accomplished"),
       }),
       handler: async ({ taskId, result }) => {
+        onLog("info", `[${agentId}] ✅ complete_task: ${taskId} — ${result.slice(0, 120)}`);
         try {
           bus.completeTask(taskId, agentId, result);
           return { success: true };
         } catch (err: any) {
+          onLog("error", `[${agentId}] complete_task failed: ${err.message}`);
           return { success: false, error: err.message };
         }
       },
@@ -135,6 +150,7 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
       }),
       handler: async ({ status }) => {
         const tasks = bus.listTasks(status ? { status } : undefined);
+        onLog("debug", `[${agentId}] list_tasks(${status ?? "all"}): ${tasks.length} tasks`);
         return {
           tasks: tasks.map((t) => ({
             id: t.id,
@@ -154,6 +170,7 @@ export function createAgentTools(agentId: string, bus: MessageBus) {
       parameters: z.object({}),
       handler: async () => {
         const agents = bus.getRegisteredAgents().filter((id) => id !== agentId);
+        onLog("debug", `[${agentId}] list_teammates: ${agents.join(", ")}`);
         return { teammates: agents, yourId: agentId };
       },
     }),
@@ -170,6 +187,7 @@ export function createLeadTools(
     onSpawnTeammate: (name: string, role: string, prompt: string, model?: string) => Promise<string>;
     onShutdownTeammate: (teammateId: string) => Promise<void>;
   },
+  onLog: ToolLogger = noop,
 ) {
   return [
     defineTool("spawn_teammate", {
@@ -201,10 +219,12 @@ export function createLeadTools(
           ),
       }),
       handler: async ({ name, role, prompt, model }) => {
+        onLog("info", `[${agentId}] 🚀 spawn_teammate: "${name}" (${role}) [model: ${model ?? "default"}]`);
         try {
           const id = await callbacks.onSpawnTeammate(name, role, prompt, model);
           return { success: true, teammateId: id, model: model ?? "auto-selected" };
         } catch (err: any) {
+          onLog("error", `[${agentId}] spawn_teammate failed: ${err.message}`);
           return { success: false, error: err.message };
         }
       },
@@ -216,10 +236,12 @@ export function createLeadTools(
         teammateId: z.string().describe("The agent ID of the teammate to shut down"),
       }),
       handler: async ({ teammateId }) => {
+        onLog("info", `[${agentId}] 🚫 shutdown_teammate: ${teammateId}`);
         try {
           await callbacks.onShutdownTeammate(teammateId);
           return { success: true };
         } catch (err: any) {
+          onLog("error", `[${agentId}] shutdown_teammate failed: ${err.message}`);
           return { success: false, error: err.message };
         }
       },
