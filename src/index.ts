@@ -1,8 +1,17 @@
 /**
  * CLI entry point — accepts a task from the user, creates the Lead,
  * submits the task, and waits for the team to finish.
+ *
+ * When running inside tmux, each agent gets its own pane and the
+ * main pane stays clean and interactive (Claude Code Agent Teams style).
  */
 import { Orchestrator } from "./orchestrator.js";
+import {
+  renderStatus,
+  notifyAgentSpawned,
+  notifyTaskCreated,
+  notifyTaskCompleted,
+} from "./progress-display.js";
 import * as readline from "node:readline";
 
 // ── Configuration ──────────────────────────────────────────────────
@@ -12,6 +21,9 @@ const POLL_MS = Number(process.env.POLL_INTERVAL_MS ?? 2000);
 const LOG_LEVEL = process.env.LOG_LEVEL ?? "info";
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+/** Whether we are in tmux multi-pane mode (set after orch init) */
+let tmuxMode = false;
 
 function log(level: string, msg: string) {
   const ts = new Date().toISOString().slice(11, 19);
@@ -24,6 +36,23 @@ function log(level: string, msg: string) {
           ? "\x1b[90m"
           : "\x1b[36m";
   if (level === "debug" && LOG_LEVEL !== "debug") return;
+
+  // In tmux mode, suppress noisy info logs in the main pane —
+  // only show warnings, errors, and key lifecycle events.
+  if (tmuxMode && level === "info") {
+    // Allow through important lifecycle messages only
+    if (
+      !msg.includes("spawned") &&
+      !msg.includes("shut down") &&
+      !msg.includes("Submitting") &&
+      !msg.includes("started") &&
+      !msg.includes("stopped") &&
+      !msg.includes("All agents idle")
+    ) {
+      return;
+    }
+  }
+
   console.error(`${color}[${ts}] [${level.toUpperCase()}]\x1b[0m ${msg}`);
 }
 
@@ -36,6 +65,8 @@ async function interactiveMode(orch: Orchestrator) {
     prompt: "\n\x1b[1m🤖 Task> \x1b[0m",
   });
 
+  const tmux = orch.isTmuxMode;
+
   console.error("\x1b[1m");
   console.error("╔═══════════════════════════════════════════════════════╗");
   console.error("║   Copilot Agent Teams — PoC                         ║");
@@ -45,8 +76,20 @@ async function interactiveMode(orch: Orchestrator) {
   console.error("\x1b[0m");
   console.error(`Lead Model : ${MODEL}`);
   console.error(`Agent Model: auto-selected per role`);
+  if (tmux) {
+    console.error(
+      "\x1b[32m✓ tmux detected — each agent gets its own pane\x1b[0m",
+    );
+  } else {
+    console.error(
+      "\x1b[33m! tmux not detected — all output in single pane\x1b[0m",
+    );
+    console.error(
+      "\x1b[90m  Tip: run inside tmux for per-agent output panes\x1b[0m",
+    );
+  }
   console.error(
-    "Type a task to submit to the agent team, or 'quit' to exit.\n",
+    "\nType a task to submit to the agent team, or 'quit' to exit.\n",
   );
   console.error("Commands:");
   console.error("  /status   — show all agents and tasks");
@@ -54,6 +97,17 @@ async function interactiveMode(orch: Orchestrator) {
   console.error("  /tasks    — list all tasks");
   console.error("  /msg <id> <text> — send message to an agent");
   console.error("  quit      — exit\n");
+
+  // ── Event-driven notifications in main pane (tmux mode) ─────
+  if (tmux) {
+    const bus = orch.getBus();
+    bus.on("task:created", (task) => {
+      console.error(notifyTaskCreated(task.description, task.assignee));
+    });
+    bus.on("task:completed", (task) => {
+      console.error(notifyTaskCompleted(task.description, task.assignee));
+    });
+  }
 
   rl.prompt();
 
@@ -70,42 +124,28 @@ async function interactiveMode(orch: Orchestrator) {
       process.exit(0);
     }
 
-    if (input === "/status" || input === "/agents") {
+    if (input === "/status") {
       const agents = orch.getAllAgents();
-      console.error("\n\x1b[1mActive Agents:\x1b[0m");
-      for (const a of agents) {
-        const status = a.busy ? "\x1b[33mBUSY\x1b[0m" : "\x1b[32mIDLE\x1b[0m";
-        const modelTag = a.info.model ? ` \x1b[90m[${a.info.model}]\x1b[0m` : "";
-        console.error(
-          `  ${a.info.id} (${a.info.role}${a.info.specialty ? `: ${a.info.specialty}` : ""}) [${status}]${modelTag}`,
-        );
-      }
+      const tasks = orch.getBus().listTasks();
+      console.error(renderStatus(agents, tasks));
+      rl.prompt();
+      return;
+    }
+
+    if (input === "/agents") {
+      const agents = orch.getAllAgents();
+      const { renderAgentTree } = await import("./progress-display.js");
+      console.error(`\n\x1b[1mActive Agents:\x1b[0m`);
+      console.error(renderAgentTree(agents));
       rl.prompt();
       return;
     }
 
     if (input === "/tasks") {
       const tasks = orch.getBus().listTasks();
-      console.error("\n\x1b[1mShared Task List:\x1b[0m");
-      if (tasks.length === 0) {
-        console.error("  (empty)");
-      }
-      for (const t of tasks) {
-        const color =
-          t.status === "completed"
-            ? "\x1b[32m"
-            : t.status === "in-progress"
-              ? "\x1b[33m"
-              : t.status === "failed"
-                ? "\x1b[31m"
-                : "\x1b[0m";
-        console.error(
-          `  ${t.id} ${color}[${t.status}]\x1b[0m ${t.description} → ${t.assignee ?? "unassigned"}`,
-        );
-        if (t.result) {
-          console.error(`    Result: ${t.result.slice(0, 120)}...`);
-        }
-      }
+      const { renderTaskList } = await import("./progress-display.js");
+      console.error(`\n\x1b[1mShared Tasks:\x1b[0m`);
+      console.error(renderTaskList(tasks));
       rl.prompt();
       return;
     }
@@ -165,6 +205,9 @@ async function main() {
     streaming: true,
     onLog: log,
   });
+
+  // Enable tmux-aware log filtering
+  tmuxMode = orch.isTmuxMode;
 
   try {
     await orch.start();

@@ -14,6 +14,7 @@ import {
   type AgentRole,
   type ManagedAgent,
 } from "./agent-session.js";
+import { TmuxManager } from "./tmux-pane.js";
 
 export interface OrchestratorConfig {
   /** Model to use for the Lead / default (default: "claude-opus-4.6") */
@@ -40,6 +41,8 @@ export class Orchestrator {
   private running = false;
   /** Per-agent turn counter for loop prevention */
   private turnCounts = new Map<string, number>();
+  /** tmux pane manager for per-agent output isolation */
+  private tmux: TmuxManager;
 
   constructor(config?: OrchestratorConfig) {
     this.config = {
@@ -51,6 +54,12 @@ export class Orchestrator {
     };
     this.client = new CopilotClient();
     this.bus = new MessageBus();
+    this.tmux = new TmuxManager((level, msg) => this.log(level as any, msg));
+  }
+
+  /** Whether tmux multi-pane mode is active */
+  get isTmuxMode(): boolean {
+    return this.tmux.isAvailable;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
@@ -82,6 +91,9 @@ export class Orchestrator {
     }
     this.agents.clear();
     this.turnCounts.clear();
+
+    // Clean up tmux panes
+    this.tmux.closeAll();
 
     await this.client.stop();
     this.bus.reset();
@@ -123,9 +135,13 @@ export class Orchestrator {
 
     const agent = await this.createAgent(info, selectedModel);
 
-    // Send the initial prompt to get the teammate working
-    this.log("info", `Teammate "${name}" spawned. Sending initial prompt...`);
-    await this.sendToAgent(agent, initialPrompt);
+    // Fire-and-forget: send the initial prompt without blocking the caller.
+    // This prevents the Lead's sendAndWait timeout from including the
+    // teammate's entire processing time.
+    this.log("info", `Teammate "${name}" spawned. Sending initial prompt (async)...`);
+    this.sendToAgent(agent, initialPrompt).catch((err) => {
+      this.log("error", `[${info.name}] initial prompt failed: ${err.message}`);
+    });
 
     return agent;
   }
@@ -173,7 +189,13 @@ export class Orchestrator {
 
     this.agents.set(info.id, agent);
 
-    // Set up streaming output — only print prefix at the start of each new line
+    // Create a tmux pane for non-lead agents (lead uses main pane)
+    if (info.role !== "lead" && this.tmux.isAvailable) {
+      this.tmux.createPane(info.id, info.name, info.specialty ?? info.role);
+    }
+
+    // Set up streaming output
+    const hasTmuxPane = this.tmux.hasPane(info.id);
     let atLineStart = true;
     const prefix = `\x1b[35m[${info.name}]\x1b[0m `;
 
@@ -185,26 +207,36 @@ export class Orchestrator {
           event?.content ??
           (typeof event === "string" ? event : "");
         if (delta) {
-          let output = "";
-          for (const ch of delta) {
-            if (atLineStart) {
-              output += prefix;
-              atLineStart = false;
+          if (hasTmuxPane) {
+            // Route to dedicated tmux pane
+            this.tmux.write(info.id, delta);
+          } else {
+            // Fallback: write to stdout with prefix
+            let output = "";
+            for (const ch of delta) {
+              if (atLineStart) {
+                output += prefix;
+                atLineStart = false;
+              }
+              output += ch;
+              if (ch === "\n") {
+                atLineStart = true;
+              }
             }
-            output += ch;
-            if (ch === "\n") {
-              atLineStart = true;
-            }
+            process.stdout.write(output);
           }
-          process.stdout.write(output);
         }
       }
     });
 
     session.on("assistant.message", () => {
       if (this.config.streaming) {
-        process.stdout.write("\n");
-        atLineStart = true;
+        if (hasTmuxPane) {
+          this.tmux.write(info.id, "\n");
+        } else {
+          process.stdout.write("\n");
+          atLineStart = true;
+        }
       }
       this.log("info", `[${info.name}] turn complete`);
     });
@@ -227,6 +259,10 @@ export class Orchestrator {
     this.bus.unregisterAgent(agentId);
     this.agents.delete(agentId);
     this.turnCounts.delete(agentId);
+    // Close the tmux pane if it exists
+    if (this.tmux.hasPane(agentId)) {
+      this.tmux.closePane(agentId);
+    }
     this.log("info", `Agent "${agent.info.name}" shut down.`);
   }
 
