@@ -99,7 +99,7 @@ export class TmuxManager {
    * The pane runs `tail -f` on a log file; agent output is
    * written to the file and appears in the pane in real-time.
    */
-  createPane(agentId: string, agentName: string, role: string): AgentPane | null {
+  createPane(agentId: string, agentName: string, role: string, model?: string): AgentPane | null {
     if (!this._available) return null;
 
     try {
@@ -117,8 +117,10 @@ export class TmuxManager {
       ).trim();
 
       // Set the pane border title — this is PERMANENT and never scrolls
+      // Include model name so each pane clearly shows which model is running
       try {
-        const titleText = `@${agentName} (${role})`;
+        const modelShort = model ? ` [${this.shortenModel(model)}]` : "";
+        const titleText = `@${agentName} (${role})${modelShort}`;
         execSync(
           `tmux select-pane -t ${paneId} -T "${titleText}"`,
           { stdio: "pipe" },
@@ -183,13 +185,14 @@ export class TmuxManager {
    * Update the tmux pane border title dynamically
    * (e.g., to show BUSY/IDLE status next to the agent name).
    */
-  updatePaneTitle(agentId: string, suffix?: string): void {
+  updatePaneTitle(agentId: string, suffix?: string, model?: string): void {
     const pane = this.panes.get(agentId);
     if (!pane) return;
     try {
+      const modelShort = model ? ` [${this.shortenModel(model)}]` : "";
       const title = suffix
-        ? `@${pane.agentName} (${pane.role}) ${suffix}`
-        : `@${pane.agentName} (${pane.role})`;
+        ? `@${pane.agentName} (${pane.role})${modelShort} ${suffix}`
+        : `@${pane.agentName} (${pane.role})${modelShort}`;
       execSync(`tmux select-pane -t ${pane.paneId} -T "${title}"`, { stdio: "pipe" });
     } catch {}
   }
@@ -286,6 +289,15 @@ export class TmuxManager {
       }
     }
     return "\x1b[35m";
+  }
+
+  /** Shorten model name for tmux pane title display */
+  private shortenModel(model: string): string {
+    if (model.startsWith("claude-opus")) return `opus-${model.split("-").pop()}`;
+    if (model.startsWith("claude-sonnet")) return `sonnet-${model.split("-").pop()}`;
+    if (model.startsWith("claude-haiku")) return `haiku-${model.split("-").pop()}`;
+    if (model.startsWith("gpt-")) return model;
+    return model;
   }
 
   private detectTmux(): boolean {

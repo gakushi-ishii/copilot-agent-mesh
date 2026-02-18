@@ -74,8 +74,8 @@ async function interactiveMode(orch: Orchestrator) {
   console.error("║   built on @github/copilot-sdk                      ║");
   console.error("╚═══════════════════════════════════════════════════════╝");
   console.error("\x1b[0m");
-  console.error(`Lead Model : ${MODEL}`);
-  console.error(`Agent Model: auto-selected per role`);
+  console.error(`Lead Model    : \x1b[35m${MODEL}\x1b[0m`);
+  console.error(`Default Model : \x1b[34mclaude-sonnet-4.6\x1b[0m \x1b[90m(Lead can override per teammate)\x1b[0m`);
   if (tmux) {
     console.error(
       "\x1b[32m✓ tmux detected — each agent gets its own pane\x1b[0m",

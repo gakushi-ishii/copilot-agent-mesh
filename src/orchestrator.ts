@@ -196,7 +196,7 @@ export class Orchestrator {
     // Create a tmux pane for ALL agents (including lead) when tmux is available.
     // The main pane stays clean and interactive — only structured notifications.
     if (this.tmux.isAvailable) {
-      this.tmux.createPane(info.id, info.name, info.specialty ?? info.role);
+      this.tmux.createPane(info.id, info.name, info.specialty ?? info.role, resolvedModel);
     }
 
     // Set up streaming output — route everything to tmux panes when available
@@ -348,7 +348,7 @@ export class Orchestrator {
     agent.busy = true;
     // Update tmux pane title to show BUSY state
     if (this.tmux.hasPane(agent.info.id)) {
-      this.tmux.updatePaneTitle(agent.info.id, "⏳");
+      this.tmux.updatePaneTitle(agent.info.id, "⏳", agent.info.model);
       this.tmux.writeStatus(agent.info.id, "working", `turn ${turns + 1}`);
     }
     try {
@@ -362,7 +362,7 @@ export class Orchestrator {
       agent.busy = false;
       // Update tmux pane title back to idle
       if (this.tmux.hasPane(agent.info.id)) {
-        this.tmux.updatePaneTitle(agent.info.id);
+        this.tmux.updatePaneTitle(agent.info.id, undefined, agent.info.model);
         this.tmux.writeStatus(agent.info.id, "idle");
       }
     }

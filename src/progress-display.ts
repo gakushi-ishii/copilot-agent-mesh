@@ -18,6 +18,35 @@ const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
 const CYAN = "\x1b[36m";
 const MAGENTA = "\x1b[35m";
+const BLUE = "\x1b[34m";
+
+// ── Model display helpers ──────────────────────────────────────────
+
+/** Shorten model name for compact display */
+function shortenModelName(model: string): string {
+  if (model.startsWith("claude-opus")) return `opus-${model.split("-").pop()}`;
+  if (model.startsWith("claude-sonnet")) return `sonnet-${model.split("-").pop()}`;
+  if (model.startsWith("claude-haiku")) return `haiku-${model.split("-").pop()}`;
+  if (model.startsWith("gpt-")) return model;
+  return model;
+}
+
+/** Color code by model tier */
+function modelColor(model: string): string {
+  if (model.includes("opus")) return MAGENTA;
+  if (model.includes("sonnet")) return BLUE;
+  if (model.includes("haiku")) return CYAN;
+  if (model.includes("gpt")) return GREEN;
+  return DIM;
+}
+
+/** Format model name with color coding and gear icon */
+function formatModel(model?: string): string {
+  if (!model) return "";
+  const short = shortenModelName(model);
+  const color = modelColor(model);
+  return ` ${color}⚙ ${short}${RESET}`;
+}
 
 // ── Agent Tree ─────────────────────────────────────────────────────
 
@@ -38,7 +67,7 @@ export function renderAgentTree(agents: ManagedAgent[]): string {
     const status = lead.busy
       ? `${YELLOW}BUSY${RESET}`
       : `${GREEN}IDLE${RESET}`;
-    const model = lead.info.model ? ` ${DIM}[${lead.info.model}]${RESET}` : "";
+    const model = formatModel(lead.info.model);
     lines.push(
       `${BOLD}${GREEN}●${RESET} ${BOLD}@${lead.info.name}${RESET} (lead) [${status}]${model}`,
     );
@@ -47,8 +76,18 @@ export function renderAgentTree(agents: ManagedAgent[]): string {
   if (teammates.length === 0) {
     lines.push(`  ${DIM}(no teammates spawned)${RESET}`);
   } else {
+    // Collect unique models used by teammates
+    const modelCounts = new Map<string, number>();
+    for (const tm of teammates) {
+      const m = tm.info.model ?? "unknown";
+      modelCounts.set(m, (modelCounts.get(m) ?? 0) + 1);
+    }
+    const modelSummary = [...modelCounts.entries()]
+      .map(([m, c]) => `${shortenModelName(m)}×${c}`)
+      .join(", ");
+
     lines.push(
-      `${BOLD}● ${teammates.length} teammate(s) active${RESET}`,
+      `${BOLD}● ${teammates.length} teammate(s) active${RESET} ${DIM}(${modelSummary})${RESET}`,
     );
     teammates.forEach((tm, i) => {
       const isLast = i === teammates.length - 1;
@@ -59,7 +98,7 @@ export function renderAgentTree(agents: ManagedAgent[]): string {
       const specialty = tm.info.specialty
         ? ` ${DIM}(${tm.info.specialty})${RESET}`
         : "";
-      const model = tm.info.model ? ` ${DIM}[${tm.info.model}]${RESET}` : "";
+      const model = formatModel(tm.info.model);
       lines.push(
         `  ${branch} ${CYAN}@${tm.info.name}${RESET}${specialty} [${status}]${model}`,
       );
@@ -122,12 +161,22 @@ export function renderStatus(
   sections.push(`\n${BOLD}Shared Tasks:${RESET}`);
   sections.push(renderTaskList(tasks));
 
-  // Summary line
+  // Summary line with model breakdown
   const busyCount = agents.filter((a) => a.busy).length;
   const completedTasks = tasks.filter((t) => t.status === "completed").length;
   const totalTasks = tasks.length;
+
+  const modelCounts = new Map<string, number>();
+  for (const a of agents) {
+    const m = a.info.model ?? "unknown";
+    modelCounts.set(m, (modelCounts.get(m) ?? 0) + 1);
+  }
+  const modelBreakdown = [...modelCounts.entries()]
+    .map(([m, c]) => `${shortenModelName(m)}×${c}`)
+    .join(" ");
+
   sections.push(
-    `\n${DIM}${busyCount} busy │ ${completedTasks}/${totalTasks} tasks done${RESET}`,
+    `\n${DIM}${busyCount} busy │ ${completedTasks}/${totalTasks} tasks done │ models: ${modelBreakdown}${RESET}`,
   );
 
   return sections.join("\n");
@@ -136,7 +185,7 @@ export function renderStatus(
 // ── Event notifications for main pane ──────────────────────────────
 
 export function notifyAgentSpawned(name: string, role: string, model?: string): string {
-  const modelTag = model ? ` ${DIM}[${model}]${RESET}` : "";
+  const modelTag = formatModel(model);
   return `${GREEN}+${RESET} ${BOLD}@${name}${RESET} spawned ${DIM}(${role})${RESET}${modelTag}`;
 }
 
