@@ -68,6 +68,10 @@ export class Orchestrator {
     this.log("info", "Starting Copilot client...");
     await this.client.start();
     this.running = true;
+    // Set the main pane's tmux title
+    if (this.tmux.isAvailable) {
+      this.tmux.setMainPaneTitle("@main");
+    }
     this.log("info", "Copilot client started.");
   }
 
@@ -189,12 +193,13 @@ export class Orchestrator {
 
     this.agents.set(info.id, agent);
 
-    // Create a tmux pane for non-lead agents (lead uses main pane)
-    if (info.role !== "lead" && this.tmux.isAvailable) {
+    // Create a tmux pane for ALL agents (including lead) when tmux is available.
+    // The main pane stays clean and interactive — only structured notifications.
+    if (this.tmux.isAvailable) {
       this.tmux.createPane(info.id, info.name, info.specialty ?? info.role);
     }
 
-    // Set up streaming output
+    // Set up streaming output — route everything to tmux panes when available
     const hasTmuxPane = this.tmux.hasPane(info.id);
     let atLineStart = true;
     const prefix = `\x1b[35m[${info.name}]\x1b[0m `;
@@ -208,10 +213,10 @@ export class Orchestrator {
           (typeof event === "string" ? event : "");
         if (delta) {
           if (hasTmuxPane) {
-            // Route to dedicated tmux pane
+            // Route to dedicated tmux pane — main pane stays clean
             this.tmux.write(info.id, delta);
           } else {
-            // Fallback: write to stdout with prefix
+            // Fallback (no tmux): write to stdout with prefix
             let output = "";
             for (const ch of delta) {
               if (atLineStart) {
@@ -341,12 +346,25 @@ export class Orchestrator {
     );
 
     agent.busy = true;
+    // Update tmux pane title to show BUSY state
+    if (this.tmux.hasPane(agent.info.id)) {
+      this.tmux.updatePaneTitle(agent.info.id, "⏳");
+      this.tmux.writeStatus(agent.info.id, "working", `turn ${turns + 1}`);
+    }
     try {
       await agent.session.sendAndWait({ prompt });
     } catch (err: any) {
       this.log("error", `[${agent.info.name}] Error: ${err.message}`);
+      if (this.tmux.hasPane(agent.info.id)) {
+        this.tmux.writeStatus(agent.info.id, "idle", err.message);
+      }
     } finally {
       agent.busy = false;
+      // Update tmux pane title back to idle
+      if (this.tmux.hasPane(agent.info.id)) {
+        this.tmux.updatePaneTitle(agent.info.id);
+        this.tmux.writeStatus(agent.info.id, "idle");
+      }
     }
   }
 

@@ -47,6 +47,7 @@ export class TmuxManager {
   private _available: boolean;
   private tmpDir: string;
   private onLog: (level: string, msg: string) => void;
+  private borderConfigured = false;
 
   constructor(onLog?: (level: string, msg: string) => void) {
     this.onLog = onLog ?? (() => {});
@@ -54,6 +55,7 @@ export class TmuxManager {
     this.tmpDir = path.join(os.tmpdir(), `copilot-agent-teams-${process.pid}`);
     if (this._available) {
       fs.mkdirSync(this.tmpDir, { recursive: true });
+      this.configurePaneBorders();
       this.onLog("info", `tmux detected — multi-pane mode enabled (tmp: ${this.tmpDir})`);
     } else {
       this.onLog("info", "tmux not detected — single-pane fallback mode");
@@ -63,6 +65,31 @@ export class TmuxManager {
   /** Whether tmux is available and we are inside a tmux session. */
   get isAvailable(): boolean {
     return this._available;
+  }
+
+  // ── Pane Border Configuration ─────────────────────────────────
+
+  /**
+   * Enable tmux pane border titles so that each pane permanently
+   * shows the agent name at the top — it never scrolls away.
+   */
+  private configurePaneBorders(): void {
+    if (this.borderConfigured) return;
+    try {
+      // Show pane titles at the top border
+      execSync(`tmux set-option -w pane-border-status top`, { stdio: "pipe" });
+      // Format: colored agent name
+      execSync(
+        `tmux set-option -w pane-border-format " #{?pane_active,#[bold],}#[fg=cyan]#{pane_title}#[default] "`,
+        { stdio: "pipe" },
+      );
+      // Style the borders
+      execSync(`tmux set-option -w pane-border-style "fg=colour240"`, { stdio: "pipe" });
+      execSync(`tmux set-option -w pane-active-border-style "fg=green"`, { stdio: "pipe" });
+      this.borderConfigured = true;
+    } catch {
+      // Older tmux may not support these options
+    }
   }
 
   // ── Pane Lifecycle ────────────────────────────────────────────
@@ -78,17 +105,9 @@ export class TmuxManager {
     try {
       const logFile = path.join(this.tmpDir, `${agentId}.log`);
 
-      // Write a banner header into the log file
-      const color = roleColor(role);
-      const banner = [
-        `\x1b[1m${this.ansiColor(role)}`,
-        `╔═══════════════════════════════════════════════╗`,
-        `║  @${agentName}  (${role})`,
-        `╚═══════════════════════════════════════════════╝`,
-        `\x1b[0m`,
-        ``,
-      ].join("\n");
-      fs.writeFileSync(logFile, banner);
+      // Write a minimal initial marker (the pane border title handles identification)
+      const initMsg = `\x1b[90m● Initializing...\x1b[0m\n`;
+      fs.writeFileSync(logFile, initMsg);
 
       // Split window horizontally, run tail -f
       const escapedPath = logFile.replace(/'/g, "'\\''");
@@ -97,10 +116,11 @@ export class TmuxManager {
         { encoding: "utf-8" },
       ).trim();
 
-      // Set the pane border title (tmux ≥ 2.6)
+      // Set the pane border title — this is PERMANENT and never scrolls
       try {
+        const titleText = `@${agentName} (${role})`;
         execSync(
-          `tmux select-pane -t ${paneId} -T "@${agentName}"`,
+          `tmux select-pane -t ${paneId} -T "${titleText}"`,
           { stdio: "pipe" },
         );
       } catch {
@@ -143,6 +163,43 @@ export class TmuxManager {
   /** Write a full line with the agent prefix. */
   writeLine(agentId: string, line: string): void {
     this.write(agentId, line + "\n");
+  }
+
+  /** Show a status indicator in the pane (e.g., "● Thinking...", "● Idle") */
+  writeStatus(agentId: string, status: "thinking" | "idle" | "working" | "done", detail?: string): void {
+    const pane = this.panes.get(agentId);
+    if (!pane) return;
+    const icons: Record<string, string> = {
+      thinking: "\x1b[33m⏳ Thinking...\x1b[0m",
+      idle:     "\x1b[32m● Idle\x1b[0m",
+      working:  "\x1b[33m▶ Working\x1b[0m",
+      done:     "\x1b[32m✓ Done\x1b[0m",
+    };
+    const msg = detail ? `${icons[status]} — ${detail}` : icons[status];
+    pane.writeStream.write(`${msg}\n`);
+  }
+
+  /**
+   * Update the tmux pane border title dynamically
+   * (e.g., to show BUSY/IDLE status next to the agent name).
+   */
+  updatePaneTitle(agentId: string, suffix?: string): void {
+    const pane = this.panes.get(agentId);
+    if (!pane) return;
+    try {
+      const title = suffix
+        ? `@${pane.agentName} (${pane.role}) ${suffix}`
+        : `@${pane.agentName} (${pane.role})`;
+      execSync(`tmux select-pane -t ${pane.paneId} -T "${title}"`, { stdio: "pipe" });
+    } catch {}
+  }
+
+  /** Set the title of the current (main) pane. */
+  setMainPaneTitle(title: string): void {
+    if (!this._available) return;
+    try {
+      execSync(`tmux select-pane -T "${title}"`, { stdio: "pipe" });
+    } catch {}
   }
 
   // ── Pane Query ────────────────────────────────────────────────
