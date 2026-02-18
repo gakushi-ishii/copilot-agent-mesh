@@ -65,6 +65,25 @@ async function interactiveMode(orch: Orchestrator) {
     prompt: "\n\x1b[1m🤖 Task> \x1b[0m",
   });
 
+  // ── Graceful shutdown helper (deduplicated) ─────────────────
+  let shuttingDown = false;
+  async function gracefulShutdown(reason: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`\n\x1b[33mShutting down (${reason})...\x1b[0m`);
+    rl.close();
+    try {
+      await orch.stop();
+    } catch {}
+    process.exit(0);
+  }
+
+  // ── Signal handlers — ensure tmux panes are cleaned up ──────
+  process.on("SIGINT", () => { gracefulShutdown("SIGINT"); });
+  process.on("SIGTERM", () => { gracefulShutdown("SIGTERM"); });
+  process.on("SIGHUP", () => { gracefulShutdown("SIGHUP"); });
+  rl.on("close", () => { gracefulShutdown("stdin closed"); });
+
   const tmux = orch.isTmuxMode;
 
   console.error("\x1b[1m");
@@ -119,9 +138,8 @@ async function interactiveMode(orch: Orchestrator) {
     }
 
     if (input === "quit" || input === "exit") {
-      console.error("Shutting down...");
-      await orch.stop();
-      process.exit(0);
+      await gracefulShutdown("user quit");
+      return;
     }
 
     if (input === "/status") {
