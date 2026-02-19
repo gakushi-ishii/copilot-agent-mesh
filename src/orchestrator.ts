@@ -143,8 +143,20 @@ export class Orchestrator {
     // This prevents the Lead's sendAndWait timeout from including the
     // teammate's entire processing time.
     this.log("info", `Teammate "${name}" spawned. Sending initial prompt (async)...`);
-    this.sendToAgent(agent, initialPrompt).catch((err) => {
-      this.log("error", `[${info.name}] initial prompt failed: ${err.message}`);
+    this.sendToAgent(agent, initialPrompt).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log("error", `[${info.name}] initial prompt failed: ${message}`);
+      // Notify the Lead so the task doesn't silently stall
+      try {
+        this.bus.sendMessage(
+          info.id,
+          "lead",
+          `⚠️ Teammate "${info.name}" failed to initialize: ${message}. The assigned task may need to be reassigned.`,
+        );
+      } catch {
+        // Lead mailbox may not exist if orchestrator is shutting down
+        this.log("warn", `[${info.name}] Could not notify lead about initialization failure`);
+      }
     });
 
     return agent;
