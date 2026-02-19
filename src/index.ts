@@ -13,10 +13,11 @@ import {
   notifyTaskCompleted,
 } from "./progress-display.js";
 import * as readline from "node:readline";
+import { DEFAULT_LEAD_MODEL, DEFAULT_TEAMMATE_MODEL } from "./constants.js";
 
 // ── Configuration ──────────────────────────────────────────────────
 
-const MODEL = process.env.COPILOT_MODEL ?? "claude-opus-4.6";
+const MODEL = process.env.COPILOT_MODEL ?? DEFAULT_LEAD_MODEL;
 const POLL_MS = Number(process.env.POLL_INTERVAL_MS ?? 2000);
 const DEBUG = process.argv.includes("--debug") || process.env.LOG_LEVEL === "debug";
 
@@ -98,7 +99,7 @@ async function interactiveMode(orch: Orchestrator) {
   console.error("╚═══════════════════════════════════════════════════════╝");
   console.error("\x1b[0m");
   console.error(`Lead Model    : \x1b[35m${MODEL}\x1b[0m`);
-  console.error(`Default Model : \x1b[34mclaude-sonnet-4.6\x1b[0m \x1b[90m(Lead can override per teammate)\x1b[0m`);
+  console.error(`Default Model : \x1b[34m${DEFAULT_TEAMMATE_MODEL}\x1b[0m \x1b[90m(Lead can override per teammate)\x1b[0m`);
   if (DEBUG) {
     console.error(`Debug Mode    : \x1b[33menabled\x1b[0m`);
   }

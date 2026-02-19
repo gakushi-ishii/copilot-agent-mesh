@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { defineTool } from "@github/copilot-sdk";
 import type { MessageBus } from "./message-bus.js";
+import { AVAILABLE_MODELS, MODEL_DESCRIPTIONS, DEFAULT_TEAMMATE_MODEL } from "./constants.js";
 
 /** Log callback type for tool activity visibility */
 export type ToolLogger = (level: "info" | "debug" | "warn" | "error", msg: string) => void;
@@ -202,20 +203,12 @@ export function createLeadTools(
           .string()
           .describe("Detailed instructions for what this teammate should work on"),
         model: z
-          .enum([
-            "claude-opus-4.6",
-            "claude-sonnet-4.6",
-            "gpt-5.3-codex",
-            "claude-haiku-3.5",
-          ])
+          .enum(AVAILABLE_MODELS)
           .optional()
           .describe(
             "Model to use for this teammate. Choose the best fit: " +
-            "claude-opus-4.6: complex multi-step reasoning, architecture, security. " +
-            "claude-sonnet-4.6: strong coding, review, testing, analysis (recommended default). " +
-            "gpt-5.3-codex: code generation, large-scale refactoring, multi-file edits. " +
-            "claude-haiku-3.5: docs, formatting, translation, simple/fast tasks. " +
-            "If omitted, defaults to claude-sonnet-4.6."
+            AVAILABLE_MODELS.map((m) => `${m}: ${MODEL_DESCRIPTIONS[m]}`).join(". ") +
+            `. If omitted, defaults to ${DEFAULT_TEAMMATE_MODEL}.`
           ),
       }),
       handler: async ({ name, role, prompt, model }) => {

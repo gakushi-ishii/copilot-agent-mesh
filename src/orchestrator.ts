@@ -15,9 +15,10 @@ import {
   type ManagedAgent,
 } from "./agent-session.js";
 import { TmuxManager } from "./tmux-pane.js";
+import { DEFAULT_LEAD_MODEL, DEFAULT_TEAMMATE_MODEL } from "./constants.js";
 
 export interface OrchestratorConfig {
-  /** Model to use for the Lead / default (default: "claude-opus-4.6") */
+  /** Model to use for the Lead / default (default: DEFAULT_LEAD_MODEL) */
   model?: string;
   /** Polling interval in ms for message delivery (default: 2000) */
   pollIntervalMs?: number;
@@ -28,9 +29,6 @@ export interface OrchestratorConfig {
   /** Log callback for debug output */
   onLog?: (level: "info" | "debug" | "warn" | "error", msg: string) => void;
 }
-
-/** Default model for teammate agents when the Lead does not specify one. */
-const DEFAULT_TEAMMATE_MODEL = "claude-sonnet-4.6";
 
 export class Orchestrator {
   private client: CopilotClient;
@@ -46,7 +44,7 @@ export class Orchestrator {
 
   constructor(config?: OrchestratorConfig) {
     this.config = {
-      model: config?.model ?? "claude-opus-4.6",
+      model: config?.model ?? DEFAULT_LEAD_MODEL,
       pollIntervalMs: config?.pollIntervalMs ?? 2000,
       streaming: config?.streaming ?? true,
       maxTurnsPerAgent: config?.maxTurnsPerAgent ?? 20,
