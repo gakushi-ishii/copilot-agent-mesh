@@ -1,87 +1,91 @@
 ---
 name: readme-writer
-description: ユーザーが README の新規作成、既存 README の編集、またはプロジェクトドキュメントの整備を依頼した際に使用する。
+description: Creates or updates README.md files for projects. Use when the user requests a new README, edits to an existing README, or project documentation improvements.
 user-invokable: true
 ---
 
-# ワークフロー
+# Workflow
 
-README.md を作成・更新する際は、以下の手順に従う。
+Follow these steps when creating or updating a README.md:
 
-1. プロジェクトのコードベースと技術スタックを確認する
-2. 下記「セクション構成」の順序で必須セクションをすべて含める
-3. 「記述ルール」に従って各セクションを記述する
-4. 「禁止事項」に該当する箇所がないか確認する
+1. Review the project codebase, tech stack, and existing documentation
+2. Include all required sections in the order defined in "Section Structure" below
+3. Apply every rule in "Writing Rules"
+4. Verify none of the "Prohibited Patterns" are present
 
-# セクション構成
+# Section Structure
 
-以下の順序を守ること。`必須` と記載のないセクションは省略可。
+Maintain the order below. Sections not marked **Required** may be omitted.
 
-| # | セクション | 必須 |
-|---|-----------|------|
-| 1 | タイトル（H1） | ✅ |
-| 2 | 概要説明 | ✅ |
-| 3 | 目次 | ✅（4セクション以上の場合） |
-| 4 | 前提条件 | |
-| 5 | インストール / セットアップ | ✅ |
-| 6 | 使い方 | ✅ |
-| 7 | 機能一覧 | |
-| 8 | 設定 / カスタマイズ | |
-| 9 | アーキテクチャ / 技術スタック | |
-| 10 | コマンドリファレンス | |
-| 11 | コントリビューション | |
-| 12 | ライセンス | ✅ |
-| 13 | お問い合わせ / サポート | |
+| # | Section | Required |
+|---|---------|----------|
+| 1 | Title (H1) | Yes |
+| 2 | Overview | Yes |
+| 3 | Table of Contents | Yes (4+ sections) |
+| 4 | Prerequisites | |
+| 5 | Installation / Setup | Yes |
+| 6 | Get Started / Usage | Yes |
+| 7 | Features | |
+| 8 | Configuration / Customization | |
+| 9 | Architecture / Tech Stack | |
+| 10 | Command Reference | |
+| 11 | Contributing | |
+| 12 | License | Yes |
+| 13 | Questions / Support | |
 
-# 記述ルール
+> [!NOTE]
+> Reference model: [GitHub + Microsoft Teams Integration README](https://github.com/integrations/microsoft-teams).
+> Key patterns to adopt: value-proposition-first overview, nested Table of Contents, command reference tables, permission scope tables, and step-by-step instructions with screenshots.
 
-## 見出し
+# Writing Rules
 
-- H1 はタイトルのみ、ページ内に **1 つだけ**
-- H2 → 主要セクション、H3 → サブセクション、H4 まで。H5 以下は使わない
-- 見出しは体言止めまたは名詞句にする
+## Headings
 
-## タイトルと概要
+- Use exactly **one H1** for the project title
+- H2 for major sections, H3 for subsections, H4 maximum — never use H5 or deeper
+- Write headings as noun phrases (e.g., "Command Reference", "Installation")
 
-- タイトル直後にバッジを並べない（バッジは概要説明の後に配置）
-- 概要は「何を解決するか」「なぜ必要か」を 2〜3 段落で、価値提案を先に述べる
-- 初見の読者が理解できる平易な言葉を使う
+## Title and Overview
 
-## 目次
+- Do **not** place badges immediately after the H1 — put them after the overview
+- Lead with the value proposition: what problem the project solves and why it matters
+- Keep the overview to 2–3 paragraphs in plain language accessible to first-time readers
 
-- セクション 4 つ以上で概要直後に配置
-- マークダウンリンクリスト、ネストは 2 階層まで
-- セクション増減時に目次も更新する
+## Table of Contents
 
-## 手順
+- Place immediately after the overview when there are 4 or more sections
+- Use a Markdown link list, nested up to 2 levels
+- Update the ToC whenever sections are added or removed
 
-- 番号付きリストで記述し、**1 ステップ = 1 操作**
-- コマンドには言語識別子付きコードブロックを使い、実行結果も添える
+## Instructions
 
-## コードとメディア
+- Use numbered lists — **one step = one action**
+- Wrap commands in fenced code blocks with a language identifier and include expected output when helpful
 
-- コードブロックには必ず言語識別子を付与する（`bash`, `javascript`, `python` 等）
-- インラインコードは短い参照のみ。長いコマンドは独立したコードブロックにする
-- 画像には必ず意味のある alt text を記述する（`![](image.png)` は禁止）
-- 画像は `images/` または `docs/images/` に格納し、該当ステップの直後に配置する
+## Code and Media
 
-## テーブルと補足
+- Always attach a language identifier to fenced code blocks (`bash`, `javascript`, `python`, etc.)
+- Use inline code only for short references; use standalone code blocks for longer commands
+- Every image **must** have meaningful alt text — `![](image.png)` is prohibited
+- Store images in `images/` or `docs/images/` and place them directly after the relevant step
 
-- 参照情報（コマンド一覧・設定項目・権限等）にはテーブルを使う
-- 補足は `> [!NOTE]`、警告は `> [!WARNING]` の GitHub Alerts 記法を使う
+## Tables and Callouts
 
-## 文体
+- Use tables for reference data (commands, config options, permissions, etc.)
+- Use `> [!NOTE]` for supplementary information and `> [!WARNING]` for cautions (GitHub Alerts syntax)
 
-- 敬体（です・ます調）で統一
-- 一文は約 80 文字以内、能動態を優先
-- 技術用語の初出時には簡単な説明を添える
-- 英語と日本語が不規則に混在しないようにする
+## Style
 
-# 禁止事項
+- Write in a clear, direct voice using the active tense
+- Keep sentences under roughly 80 characters
+- Briefly explain technical terms on first use
+- Maintain consistent terminology throughout — do not alternate between synonyms for the same concept
 
-- H1 の複数使用
-- タイトル直後のバッジ大量配置
-- 目次なしのセクション乱立
-- コードブロックの言語識別子の省略
-- 画像 alt text の省略
-- 1 ステップへの複数操作の詰め込み
+# Prohibited Patterns
+
+- Multiple H1 headings
+- Badge walls immediately after the title
+- Sprawling sections without a Table of Contents
+- Code blocks without a language identifier
+- Images without alt text
+- Multiple operations crammed into a single step

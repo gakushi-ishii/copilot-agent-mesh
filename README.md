@@ -1,178 +1,284 @@
 # Copilot Agent Mesh
 
-複数の GitHub Copilot セッションを協調させ、エージェント同士が双方向にメッセージをやり取りしながらタスクを遂行する、マルチエージェントオーケストレーションの PoC（概念実証）です。
+Copilot Agent Mesh is a proof-of-concept multi-agent orchestration system that coordinates multiple GitHub Copilot sessions so they can exchange messages bidirectionally and complete tasks as a team. Unlike unidirectional sub-agent patterns, teammates communicate directly through shared mailboxes, enabling true collaboration.
 
-[`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk) の複数セッション管理機能を活用し、インメモリのメッセージバスとカスタムツール注入によって、Lead + Teammates パターンのマルチエージェント協調システムを実現します。単方向のサブエージェントとは異なり、チームメイト同士がメールボックスを通じて直接対話できる点が特徴です。
+Built on [`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk), the system uses an in-memory message bus and custom tool injection to implement a **Lead + Teammates** pattern. The Lead agent dynamically spawns specialist teammates, delegates work, and synthesizes results — while teammates coordinate among themselves using shared mailboxes and a task list.
 
-## 目次
+## Table of Contents
 
-- [前提条件](#前提条件)
-- [インストール / セットアップ](#インストール--セットアップ)
-- [使い方](#使い方)
-- [機能一覧](#機能一覧)
-- [アーキテクチャ](#アーキテクチャ)
-- [コマンドリファレンス](#コマンドリファレンス)
-- [設定 / カスタマイズ](#設定--カスタマイズ)
-- [ライセンス](#ライセンス)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Get Started](#get-started)
+  - [Interactive Mode](#interactive-mode)
+  - [Single-Shot Mode](#single-shot-mode)
+  - [Session Commands](#session-commands)
+- [Features](#features)
+  - [Bidirectional Agent Communication](#bidirectional-agent-communication)
+  - [Multi-Model Support](#multi-model-support)
+  - [tmux Multi-Pane Mode](#tmux-multi-pane-mode)
+  - [Shared Task List](#shared-task-list)
+  - [Progress Display](#progress-display)
+- [Architecture](#architecture)
+  - [Tech Stack](#tech-stack)
+  - [Source Files](#source-files)
+  - [Communication Flow](#communication-flow)
+- [Command Reference](#command-reference)
+- [Configuration](#configuration)
+- [License](#license)
 
-## 前提条件
+## Prerequisites
 
-| 項目 | バージョン |
-|------|-----------|
-| Node.js | 18 以上 |
-| GitHub Copilot CLI | 最新版 |
-| GitHub Copilot ライセンス | 有効なサブスクリプション |
+| Requirement | Version |
+|-------------|---------|
+| Node.js | 18 or later |
+| GitHub Copilot CLI | Latest |
+| GitHub Copilot License | Active subscription |
+| tmux (optional) | Any recent version |
 
 > [!NOTE]
-> `@github/copilot-sdk` は technical preview（v0.1.x）のため、破壊的変更が入る可能性があります。
+> `@github/copilot-sdk` is in technical preview (v0.1.x). Expect breaking changes between releases.
 
-## インストール / セットアップ
+> [!NOTE]
+> tmux is optional but strongly recommended. When running inside tmux, each agent gets its own pane with a persistent border title showing the agent name, role, and model.
 
-1. リポジトリをクローンします。
+## Installation
+
+1. Clone the repository.
 
    ```bash
    git clone https://github.com/gakushi-ishii/copilot-agent-mesh.git
    cd copilot-agent-mesh
    ```
 
-2. 依存パッケージをインストールします。
+2. Install dependencies.
 
    ```bash
    npm install
    ```
 
-3. GitHub Copilot CLI が PATH に通っていることを確認します。
+3. Verify that the GitHub Copilot CLI is available on your PATH.
 
    ```bash
    copilot --version
    ```
 
-4. TypeScript をビルドします（任意。`tsx` で直接実行する場合は不要です）。
+4. Build TypeScript (optional — you can run directly with `tsx`).
 
    ```bash
    npm run build
    ```
 
-## 使い方
+## Get Started
 
-### 対話モード
+### Interactive Mode
 
-ターミナルで対話しながらタスクをチームに指示できます。
+Launch the interactive REPL to submit tasks and monitor the team in real time.
 
 ```bash
 npm start
 ```
 
-起動後、プロンプトにタスクを入力すると Lead エージェントがチームを編成し、作業を開始します。
+After startup, type a task at the prompt. The Lead agent assembles a team and begins work.
 
 ```text
-🤖 Task> 3つの観点（セキュリティ・パフォーマンス・テストカバレッジ）でPRをレビューして
+🤖 Task> Review this PR from three angles: security, performance, and test coverage
 ```
 
-### ワンショットモード
-
-タスクを引数で渡し、完了まで自動実行します。
-
-```bash
-npm start -- --task "認証モジュールのセキュリティレビューを実施して"
-```
-
-### セッション中のコマンド
-
-対話モードでは以下のコマンドが利用できます。
-
-| コマンド | 説明 |
-|---------|------|
-| `/status` | 全エージェントの一覧と状態を表示 |
-| `/agents` | アクティブなエージェント一覧を表示 |
-| `/tasks` | 共有タスクリストを表示 |
-| `/msg <id> <text>` | 特定のエージェントに直接メッセージを送信 |
-| `quit` | チームを停止して終了 |
-
-## 機能一覧
-
-- **双方向エージェント間通信** — メールボックス方式でエージェント同士がメッセージを送受信します
-- **共有タスクリスト** — 依存関係つきのタスクを作成・割当・完了管理します
-- **動的チーム編成** — Lead が `spawn_teammate` ツールでチームメイトを動的に生成します
-- **ブロードキャスト** — 全チームメイトへの一斉通知が可能です
-- **ストリーミング出力** — 各エージェントの応答をリアルタイムで表示します
-- **カスタムツール注入** — `defineTool()` + Zod スキーマでエージェントにツールを配布します
-
-## アーキテクチャ
+The system displays a startup banner with the current model configuration:
 
 ```text
-┌──────────────────────────────────────────────────┐
-│               Orchestrator (Node.js)             │
-│                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
-│  │  Lead    │  │Teammate A│  │Teammate B│ ...   │
-│  │ Session  │  │ Session  │  │ Session  │       │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
-│       │              │              │             │
-│  ┌────┴──────────────┴──────────────┴────┐       │
-│  │        Message Bus (in-memory)        │       │
-│  │   Mailbox + Task List + EventEmitter  │       │
-│  └───────────────────────────────────────┘       │
-│                                                  │
-│  ┌───────────────────────────────────────┐       │
-│  │     CopilotClient (1 instance)        │       │
-│  │    ← JSON-RPC → Copilot CLI           │       │
-│  └───────────────────────────────────────┘       │
-└──────────────────────────────────────────────────┘
+╔═══════════════════════════════════════════════════════╗
+║   Copilot Agent Teams — PoC                         ║
+║   Bidirectional Multi-Agent Orchestration            ║
+║   built on @github/copilot-sdk                      ║
+╚═══════════════════════════════════════════════════════╝
+Lead Model    : claude-opus-4.6
+Default Model : claude-sonnet-4.6 (Lead can override per teammate)
 ```
 
-### 技術スタック
+### Single-Shot Mode
 
-| 技術 | 用途 |
-|------|------|
-| TypeScript (ES2022) | 実装言語 |
-| `@github/copilot-sdk` | Copilot CLI のプログラマティック制御 |
-| `zod` | カスタムツールのスキーマ定義 |
-| `tsx` | TypeScript の直接実行 |
-| Node.js EventEmitter | メッセージバスのイベント通知 |
-
-### ソースファイル構成
-
-| ファイル | 役割 |
-|---------|------|
-| `src/message-bus.ts` | インメモリのメールボックスと共有タスクリスト |
-| `src/agent-tools.ts` | `defineTool()` によるカスタムツール定義 |
-| `src/agent-session.ts` | エージェント情報の型定義とシステムメッセージ生成 |
-| `src/orchestrator.ts` | チーム管理・メッセージ配送ループの中核エンジン |
-| `src/index.ts` | CLI エントリポイント（対話 / ワンショット両モード） |
-
-### 双方向通信の仕組み
-
-1. エージェントが `send_message` ツールを呼び出します
-2. ツールハンドラが Message Bus のメールボックスに書き込みます
-3. ポーリングループが受信側の未読メッセージを検出します
-4. 未読メッセージをプロンプトとして受信側セッションに自動投入します
-5. 受信側エージェントがメッセージを読んで応答・行動します
-
-## コマンドリファレンス
-
-| コマンド | 説明 |
-|---------|------|
-| `npm start` | 対話モードで起動 |
-| `npm start -- --task "..."` | ワンショットモードで起動 |
-| `npm run build` | TypeScript をコンパイル |
-| `npm run dev` | ウォッチモードで起動 |
-| `npm test` | MessageBus の単体テストを実行 |
-
-## 設定 / カスタマイズ
-
-環境変数で動作をカスタマイズできます。
-
-| 環境変数 | デフォルト | 説明 |
-|---------|-----------|------|
-| `COPILOT_MODEL` | `gpt-5` | 使用するモデル（`claude-sonnet-4.5` 等） |
-| `POLL_INTERVAL_MS` | `2000` | メッセージポーリング間隔（ミリ秒） |
-| `LOG_LEVEL` | `info` | ログ出力レベル（`info` / `debug`） |
+Pass a task as an argument. The system runs to completion and exits automatically.
 
 ```bash
-COPILOT_MODEL=claude-sonnet-4.5 LOG_LEVEL=debug npm start
+npm start -- --task "Run a security review of the authentication module"
 ```
 
-## ライセンス
+### Session Commands
+
+Use these commands during an interactive session:
+
+| Command | Description |
+|---------|-------------|
+| `/status` | Show all agents and tasks with a summary |
+| `/agents` | Display a tree view of active agents with model and status |
+| `/tasks` | Display the shared task checklist |
+| `/msg <id> <text>` | Send a message directly to a specific agent |
+| `quit` | Gracefully shut down all agents and exit |
+
+## Features
+
+### Bidirectional Agent Communication
+
+Agents exchange messages through a mailbox system on the in-memory message bus. Each agent has a dedicated mailbox. Messages are delivered by a polling loop that injects unread messages as prompts into the recipient's Copilot session.
+
+Available communication tools for every agent:
+
+| Tool | Description |
+|------|-------------|
+| `send_message` | Send a direct message to a specific teammate |
+| `broadcast` | Send a message to all teammates at once |
+| `read_messages` | Check the mailbox for unread messages |
+| `list_teammates` | List all currently registered teammates |
+
+### Multi-Model Support
+
+The Lead agent selects the best model for each teammate at spawn time. This enables cost-effective allocation: fast, lightweight models for simple tasks and powerful models for complex reasoning.
+
+| Model | Best For |
+|-------|----------|
+| `claude-opus-4.6` | Complex multi-step reasoning, architecture, security |
+| `claude-sonnet-4.6` | Code generation, review, testing, analysis (default for teammates) |
+| `gpt-5.3-codex` | Large-scale code generation, multi-file refactoring |
+| `claude-haiku-3.5` | Documentation, formatting, translation, simple tasks |
+
+The Lead runs on `claude-opus-4.6` by default. Teammates default to `claude-sonnet-4.6` unless the Lead specifies otherwise.
+
+### tmux Multi-Pane Mode
+
+When running inside tmux, each agent gets its own pane with:
+
+- **Persistent border titles** showing agent name, role, and model (e.g., `@security-reviewer (security) [sonnet-4.6]`)
+- **Real-time streaming output** routed to the dedicated pane
+- **Status indicators** (`⏳ Thinking`, `▶ Working`, `● Idle`, `✓ Done`)
+- **Tiled layout** automatically rearranged as teammates are spawned or shut down
+
+The main pane stays clean and interactive — only structured notifications (new tasks, completed tasks) appear there.
+
+Without tmux, all agent output is interleaved in a single terminal with `[AgentName]` prefixes.
+
+### Shared Task List
+
+All agents share a task list with dependency tracking. The Lead creates tasks and assigns them; teammates claim and complete tasks.
+
+| Tool | Description |
+|------|-------------|
+| `create_task` | Create a task with optional assignee and dependencies |
+| `claim_task` | Claim an unassigned pending task |
+| `complete_task` | Mark a task as completed with a result summary |
+| `list_tasks` | View the task list filtered by status |
+
+Tasks support four states: `pending`, `in-progress`, `completed`, and `failed`. A task blocked by unresolved dependencies cannot be claimed.
+
+### Progress Display
+
+The `/status` command renders a structured overview:
+
+- **Agent tree** — shows all agents with role, model, and busy/idle state
+- **Task checklist** — shows all tasks with status icons (`□` pending, `■` in-progress, `✓` completed, `✗` failed)
+- **Summary line** — busy count, task completion ratio, and model breakdown
+
+### Lead-Only Tools
+
+The Lead agent has exclusive access to team management tools:
+
+| Tool | Description |
+|------|-------------|
+| `spawn_teammate` | Create a new teammate with a name, role, initial prompt, and model |
+| `shutdown_teammate` | Gracefully shut down a teammate and clean up resources |
+
+## Architecture
+
+```text
+┌──────────────────────────────────────────────────────┐
+│               Orchestrator (Node.js)                 │
+│                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐           │
+│  │  Lead    │  │Teammate A│  │Teammate B│  ...      │
+│  │ Session  │  │ Session  │  │ Session  │           │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘           │
+│       │              │              │                 │
+│  ┌────┴──────────────┴──────────────┴────┐           │
+│  │        Message Bus (in-memory)        │           │
+│  │   Mailbox + Task List + EventEmitter  │           │
+│  └───────────────────────────────────────┘           │
+│                                                      │
+│  ┌───────────────────────────────────────┐           │
+│  │        TmuxManager (optional)         │           │
+│  │   Per-agent panes + streaming output  │           │
+│  └───────────────────────────────────────┘           │
+│                                                      │
+│  ┌───────────────────────────────────────┐           │
+│  │     CopilotClient (1 instance)        │           │
+│  │    ← JSON-RPC → Copilot CLI           │           │
+│  └───────────────────────────────────────┘           │
+└──────────────────────────────────────────────────────┘
+```
+
+### Tech Stack
+
+| Technology | Purpose |
+|------------|---------|
+| TypeScript (ES2022) | Implementation language |
+| `@github/copilot-sdk` | Programmatic control of the Copilot CLI |
+| `zod` | Schema definitions for custom agent tools |
+| `tsx` | Direct TypeScript execution without a build step |
+| Node.js EventEmitter | Event-driven notifications on the message bus |
+| tmux | Optional per-agent output pane isolation |
+
+### Source Files
+
+| File | Responsibility |
+|------|---------------|
+| `src/index.ts` | CLI entry point — interactive REPL and single-shot mode |
+| `src/orchestrator.ts` | Core engine — agent lifecycle, message delivery loop, team coordination |
+| `src/message-bus.ts` | In-memory mailboxes and shared task list with dependency tracking |
+| `src/agent-tools.ts` | Custom tool definitions via `defineTool()` + Zod schemas |
+| `src/agent-session.ts` | Agent type definitions and system message generation |
+| `src/progress-display.ts` | Structured rendering — agent tree, task checklist, event notifications |
+| `src/tmux-pane.ts` | tmux pane management — create, write, close, border titles |
+| `src/__tests__/message-bus.test.ts` | Unit tests for the MessageBus |
+
+### Communication Flow
+
+1. An agent calls the `send_message` tool
+2. The tool handler writes the message to the recipient's mailbox on the Message Bus
+3. A polling loop detects unread messages in the recipient's mailbox
+4. Unread messages are injected as a prompt into the recipient's Copilot session
+5. The recipient agent reads the messages and responds or takes action
+
+Each agent has a configurable maximum turn limit (`maxTurnsPerAgent`, default 20) to prevent infinite loops. When an agent is busy, incoming messages are enqueued via the SDK's enqueue mode and processed when the agent becomes idle.
+
+## Command Reference
+
+| Command | Description |
+|---------|-------------|
+| `npm start` | Start in interactive mode |
+| `npm start -- --task "..."` | Start in single-shot mode |
+| `npm start -- --debug` | Start with debug logging enabled |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm run dev` | Start in watch mode (auto-restart on changes) |
+| `npm test` | Run MessageBus unit tests |
+
+## Configuration
+
+Configure behavior through environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COPILOT_MODEL` | `claude-opus-4.6` | Model for the Lead agent |
+| `POLL_INTERVAL_MS` | `2000` | Message polling interval in milliseconds |
+| `LOG_LEVEL` | `info` | Log verbosity (`info` or `debug`) |
+
+Example:
+
+```bash
+COPILOT_MODEL=claude-sonnet-4.6 LOG_LEVEL=debug npm start
+```
+
+> [!NOTE]
+> The `--debug` CLI flag is equivalent to setting `LOG_LEVEL=debug`.
+
+## License
 
 ISC
