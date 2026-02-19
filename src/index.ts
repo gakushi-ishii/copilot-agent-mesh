@@ -75,7 +75,10 @@ async function interactiveMode(orch: Orchestrator) {
     rl.close();
     try {
       await orch.stop();
-    } catch {}
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`\x1b[31m[shutdown] cleanup error: ${msg}\x1b[0m`);
+    }
     process.exit(0);
   }
 
@@ -188,7 +191,10 @@ async function interactiveMode(orch: Orchestrator) {
         return;
       }
       // Directly inject user message into the agent's session
-      agent.session.send({ prompt: `[User message]: ${text}` }).catch(() => {});
+      agent.session.send({ prompt: `[User message]: ${text}` }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`\x1b[31mFailed to send message to ${targetId}: ${msg}\x1b[0m`);
+      });
       console.error(`Message sent to ${targetId}.`);
       rl.prompt();
       return;
@@ -246,7 +252,10 @@ async function main() {
     }
   } catch (err: any) {
     log("error", `Fatal: ${err.message}`);
-    await orch.stop().catch(() => {});
+    await orch.stop().catch((stopErr: unknown) => {
+      const msg = stopErr instanceof Error ? stopErr.message : String(stopErr);
+      log("error", `Cleanup failed during fatal shutdown: ${msg}`);
+    });
     process.exit(1);
   }
 }

@@ -88,7 +88,8 @@ export class TmuxManager {
       execSync(`tmux set-option -w pane-active-border-style "fg=green"`, { stdio: "pipe" });
       this.borderConfigured = true;
     } catch {
-      // Older tmux may not support these options
+      // Intentionally ignored: older tmux versions may not support pane border options
+      this.onLog("debug", "tmux pane border configuration not supported (older tmux?)");
     }
   }
 
@@ -126,7 +127,8 @@ export class TmuxManager {
           { stdio: "pipe" },
         );
       } catch {
-        // Older tmux versions may not support -T
+        // Intentionally ignored: older tmux versions may not support -T flag
+        this.onLog("debug", `tmux pane title not supported for ${agentId} (older tmux?)`);
       }
 
       // Re-layout to tile all panes evenly
@@ -194,7 +196,9 @@ export class TmuxManager {
         ? `@${pane.agentName} (${pane.role})${modelShort} ${suffix}`
         : `@${pane.agentName} (${pane.role})${modelShort}`;
       execSync(`tmux select-pane -t ${pane.paneId} -T "${title}"`, { stdio: "pipe" });
-    } catch {}
+    } catch {
+      // Intentionally ignored: pane title update is non-critical
+    }
   }
 
   /** Set the title of the current (main) pane. */
@@ -202,7 +206,9 @@ export class TmuxManager {
     if (!this._available) return;
     try {
       execSync(`tmux select-pane -T "${title}"`, { stdio: "pipe" });
-    } catch {}
+    } catch {
+      // Intentionally ignored: main pane title update is non-critical
+    }
   }
 
   // ── Pane Query ────────────────────────────────────────────────
@@ -234,7 +240,9 @@ export class TmuxManager {
     }
     try {
       fs.unlinkSync(pane.logFile);
-    } catch {}
+    } catch {
+      // Intentionally ignored: log file may already be removed
+    }
 
     this.panes.delete(agentId);
     this.updateStatusBar();
@@ -248,7 +256,9 @@ export class TmuxManager {
     }
     try {
       fs.rmSync(this.tmpDir, { recursive: true, force: true });
-    } catch {}
+    } catch {
+      // Intentionally ignored: temp dir cleanup is best-effort
+    }
   }
 
   // ── Status Bar ────────────────────────────────────────────────
@@ -270,7 +280,9 @@ export class TmuxManager {
         `tmux set-option -q status-right "${status}"`,
         { stdio: "pipe" },
       );
-    } catch {}
+    } catch {
+      // Intentionally ignored: status bar update is non-critical
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────
