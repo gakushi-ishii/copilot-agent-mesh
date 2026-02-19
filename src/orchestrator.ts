@@ -313,7 +313,12 @@ export class Orchestrator {
 
         const prompt = `You have ${msgs.length} new message(s) from teammates:\n\n${formatted}\n\nPlease read and respond appropriately. If any action is needed, take it. Then check your task list.`;
 
-        await this.sendToAgent(agent, prompt);
+        try {
+          await this.sendToAgent(agent, prompt);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.log("error", `[${agent.info.name}] message polling failed: ${message}`);
+        }
       }
     }, this.config.pollIntervalMs);
   }
