@@ -1,112 +1,226 @@
 /**
- * Lightweight test for MessageBus — no test framework needed.
+ * MessageBus — unit tests (migrated from manual test to Vitest)
  */
+import { describe, it, expect, beforeEach } from "vitest";
 import { MessageBus } from "../message-bus.js";
 
-let passed = 0;
-let failed = 0;
+describe("MessageBus", () => {
+  let bus: MessageBus;
 
-function assert(condition: boolean, label: string) {
-  if (condition) {
-    console.log(`  ✅ ${label}`);
-    passed++;
-  } else {
-    console.error(`  ❌ ${label}`);
-    failed++;
-  }
-}
+  beforeEach(() => {
+    bus = new MessageBus();
+    bus.registerAgent("lead");
+    bus.registerAgent("alice");
+    bus.registerAgent("bob");
+  });
 
-function section(name: string) {
-  console.log(`\n── ${name} ──`);
-}
+  // ── Agent Registration ──────────────────────────────────────
 
-// ─── Tests ────────────────────────────────────────────────────────
+  describe("Agent Registration", () => {
+    it("should register agents", () => {
+      expect(bus.getRegisteredAgents()).toHaveLength(3);
+      expect(bus.getRegisteredAgents()).toContain("lead");
+      expect(bus.getRegisteredAgents()).toContain("alice");
+    });
 
-const bus = new MessageBus();
+    it("should unregister agents", () => {
+      bus.unregisterAgent("bob");
+      expect(bus.getRegisteredAgents()).toHaveLength(2);
+      expect(bus.getRegisteredAgents()).not.toContain("bob");
+    });
 
-section("Agent Registration");
-bus.registerAgent("lead");
-bus.registerAgent("alice");
-bus.registerAgent("bob");
-assert(bus.getRegisteredAgents().length === 3, "3 agents registered");
+    it("should not duplicate agents on re-register", () => {
+      bus.registerAgent("alice");
+      expect(bus.getRegisteredAgents().filter((a) => a === "alice")).toHaveLength(1);
+    });
+  });
 
-section("Direct Messaging");
-bus.sendMessage("lead", "alice", "Hello Alice");
-assert(bus.hasUnreadMessages("alice"), "Alice has unread messages");
-assert(!bus.hasUnreadMessages("bob"), "Bob has no unread messages");
+  // ── Direct Messaging ────────────────────────────────────────
 
-const msgs = bus.readMessages("alice");
-assert(msgs.length === 1, "Alice received 1 message");
-assert(msgs[0].from === "lead", "Message is from lead");
-assert(msgs[0].content === "Hello Alice", "Message content matches");
-assert(!bus.hasUnreadMessages("alice"), "Alice messages marked as read");
+  describe("Direct Messaging", () => {
+    it("should deliver a message to the recipient", () => {
+      bus.sendMessage("lead", "alice", "Hello Alice");
+      expect(bus.hasUnreadMessages("alice")).toBe(true);
+      expect(bus.hasUnreadMessages("bob")).toBe(false);
+    });
 
-section("Broadcast");
-bus.sendMessage("lead", "*", "Team update");
-assert(bus.hasUnreadMessages("alice"), "Alice got broadcast");
-assert(bus.hasUnreadMessages("bob"), "Bob got broadcast");
-assert(!bus.hasUnreadMessages("lead"), "Lead did not get own broadcast");
+    it("should return correct message content", () => {
+      bus.sendMessage("lead", "alice", "Hello Alice");
+      const msgs = bus.readMessages("alice");
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].from).toBe("lead");
+      expect(msgs[0].content).toBe("Hello Alice");
+    });
 
-const aliceBroadcast = bus.readMessages("alice");
-const bobBroadcast = bus.readMessages("bob");
-assert(aliceBroadcast.length === 1, "Alice got 1 broadcast");
-assert(bobBroadcast.length === 1, "Bob got 1 broadcast");
+    it("should mark messages as read after reading", () => {
+      bus.sendMessage("lead", "alice", "Hello");
+      bus.readMessages("alice");
+      expect(bus.hasUnreadMessages("alice")).toBe(false);
+    });
 
-section("Task Management");
-const task1 = bus.createTask("Implement auth module", "lead", { assignee: "alice" });
-const task2 = bus.createTask("Write tests", "lead", { dependsOn: [task1.id] });
+    it("should not mark messages as read when markRead=false", () => {
+      bus.sendMessage("lead", "alice", "Hello");
+      bus.readMessages("alice", false);
+      expect(bus.hasUnreadMessages("alice")).toBe(true);
+    });
 
-assert(task1.status === "pending", "Task 1 is pending");
-assert(task2.dependsOn.includes(task1.id), "Task 2 depends on Task 1");
+    it("should throw when sending to nonexistent agent", () => {
+      expect(() => bus.sendMessage("lead", "nonexistent", "Hello")).toThrow(
+        'Agent "nonexistent" not registered',
+      );
+    });
+  });
 
-// Claim task 1
-const claimed = bus.claimTask(task1.id, "alice");
-assert(claimed.status === "in-progress", "Task 1 claimed by Alice");
+  // ── Broadcast ───────────────────────────────────────────────
 
-// Task 2 should be blocked
-let blocked = false;
-try {
-  bus.claimTask(task2.id, "bob");
-} catch {
-  blocked = true;
-}
-assert(blocked, "Task 2 blocked by dependency");
+  describe("Broadcast", () => {
+    it("should deliver broadcast to all except sender", () => {
+      bus.sendMessage("lead", "*", "Team update");
+      expect(bus.hasUnreadMessages("alice")).toBe(true);
+      expect(bus.hasUnreadMessages("bob")).toBe(true);
+      expect(bus.hasUnreadMessages("lead")).toBe(false);
+    });
 
-// Complete task 1
-bus.completeTask(task1.id, "alice", "Auth module implemented with JWT");
-assert(bus.getTask(task1.id)?.status === "completed", "Task 1 completed");
+    it("should deliver correct broadcast content", () => {
+      bus.sendMessage("lead", "*", "Team update");
+      const aliceMsgs = bus.readMessages("alice");
+      const bobMsgs = bus.readMessages("bob");
+      expect(aliceMsgs).toHaveLength(1);
+      expect(bobMsgs).toHaveLength(1);
+      expect(aliceMsgs[0].content).toBe("Team update");
+    });
+  });
 
-// Now task 2 should be claimable
-const claimed2 = bus.claimTask(task2.id, "bob");
-assert(claimed2.status === "in-progress", "Task 2 now claimable after dep resolved");
+  // ── Task Management ─────────────────────────────────────────
 
-section("Task Listing & Filtering");
-const allTasks = bus.listTasks();
-assert(allTasks.length === 2, "2 total tasks");
-const inProgress = bus.listTasks({ status: "in-progress" });
-assert(inProgress.length === 1, "1 in-progress task");
-assert(inProgress[0].assignee === "bob", "In-progress task assigned to Bob");
+  describe("Task Management", () => {
+    it("should create tasks with correct initial state", () => {
+      const task = bus.createTask("Implement auth", "lead", { assignee: "alice" });
+      expect(task.status).toBe("pending");
+      expect(task.assignee).toBe("alice");
+      expect(task.createdBy).toBe("lead");
+    });
 
-section("Error Handling");
-let errorThrown = false;
-try {
-  bus.sendMessage("lead", "nonexistent", "Hello");
-} catch {
-  errorThrown = true;
-}
-assert(errorThrown, "Error thrown for nonexistent agent");
+    it("should support task dependencies", () => {
+      const task1 = bus.createTask("Task A", "lead");
+      const task2 = bus.createTask("Task B", "lead", { dependsOn: [task1.id] });
+      expect(task2.dependsOn).toContain(task1.id);
+    });
 
-let doubleClaimError = false;
-try {
-  bus.claimTask(task2.id, "alice"); // already claimed by bob
-} catch {
-  doubleClaimError = true;
-}
-assert(doubleClaimError, "Cannot double-claim a task");
+    it("should allow claiming a pending task", () => {
+      const task = bus.createTask("Task A", "lead");
+      const claimed = bus.claimTask(task.id, "alice");
+      expect(claimed.status).toBe("in-progress");
+      expect(claimed.assignee).toBe("alice");
+    });
 
-// ─── Summary ──────────────────────────────────────────────────────
+    it("should block claiming when dependency is unresolved", () => {
+      const task1 = bus.createTask("Task A", "lead");
+      const task2 = bus.createTask("Task B", "lead", { dependsOn: [task1.id] });
+      expect(() => bus.claimTask(task2.id, "bob")).toThrow(/blocked by dependency/);
+    });
 
-console.log(`\n${"═".repeat(40)}`);
-console.log(`Results: ${passed} passed, ${failed} failed`);
-console.log(`${"═".repeat(40)}`);
-process.exit(failed > 0 ? 1 : 0);
+    it("should allow claiming after dependency is completed", () => {
+      const task1 = bus.createTask("Task A", "lead");
+      const task2 = bus.createTask("Task B", "lead", { dependsOn: [task1.id] });
+      bus.claimTask(task1.id, "alice");
+      bus.completeTask(task1.id, "alice", "Done");
+      const claimed = bus.claimTask(task2.id, "bob");
+      expect(claimed.status).toBe("in-progress");
+    });
+
+    it("should prevent double-claiming a task", () => {
+      const task = bus.createTask("Task A", "lead");
+      bus.claimTask(task.id, "alice");
+      expect(() => bus.claimTask(task.id, "bob")).toThrow(/not claimable/);
+    });
+
+    it("should complete a task with result", () => {
+      const task = bus.createTask("Task A", "lead");
+      bus.claimTask(task.id, "alice");
+      bus.completeTask(task.id, "alice", "All done");
+      expect(bus.getTask(task.id)?.status).toBe("completed");
+      expect(bus.getTask(task.id)?.result).toBe("All done");
+    });
+
+    it("should fail a task with reason", () => {
+      const task = bus.createTask("Task A", "lead");
+      bus.claimTask(task.id, "alice");
+      bus.failTask(task.id, "alice", "Something broke");
+      expect(bus.getTask(task.id)?.status).toBe("failed");
+      expect(bus.getTask(task.id)?.result).toBe("Something broke");
+    });
+
+    it("should prevent completing a task assigned to someone else", () => {
+      const task = bus.createTask("Task A", "lead");
+      bus.claimTask(task.id, "alice");
+      expect(() => bus.completeTask(task.id, "bob", "Done")).toThrow(
+        /not assigned to "bob"/,
+      );
+    });
+  });
+
+  // ── Task Filtering ──────────────────────────────────────────
+
+  describe("Task Filtering", () => {
+    it("should list all tasks", () => {
+      bus.createTask("Task A", "lead");
+      bus.createTask("Task B", "lead");
+      expect(bus.listTasks()).toHaveLength(2);
+    });
+
+    it("should filter tasks by status", () => {
+      const task = bus.createTask("Task A", "lead");
+      bus.createTask("Task B", "lead");
+      bus.claimTask(task.id, "alice");
+      expect(bus.listTasks({ status: "in-progress" })).toHaveLength(1);
+      expect(bus.listTasks({ status: "pending" })).toHaveLength(1);
+    });
+
+    it("should filter tasks by assignee", () => {
+      const task = bus.createTask("Task A", "lead");
+      bus.claimTask(task.id, "alice");
+      expect(bus.listTasks({ assignee: "alice" })).toHaveLength(1);
+      expect(bus.listTasks({ assignee: "bob" })).toHaveLength(0);
+    });
+  });
+
+  // ── Events ──────────────────────────────────────────────────
+
+  describe("Events", () => {
+    it("should emit message event on sendMessage", () => {
+      let emitted = false;
+      bus.on("message", () => { emitted = true; });
+      bus.sendMessage("lead", "alice", "Hi");
+      expect(emitted).toBe(true);
+    });
+
+    it("should emit task:created event", () => {
+      let emitted = false;
+      bus.on("task:created", () => { emitted = true; });
+      bus.createTask("Task A", "lead");
+      expect(emitted).toBe(true);
+    });
+
+    it("should emit task:completed event", () => {
+      let emitted = false;
+      bus.on("task:completed", () => { emitted = true; });
+      const task = bus.createTask("Task A", "lead");
+      bus.claimTask(task.id, "alice");
+      bus.completeTask(task.id, "alice", "Done");
+      expect(emitted).toBe(true);
+    });
+  });
+
+  // ── Reset ───────────────────────────────────────────────────
+
+  describe("Reset", () => {
+    it("should clear all state on reset", () => {
+      bus.sendMessage("lead", "alice", "Hi");
+      bus.createTask("Task A", "lead");
+      bus.reset();
+      expect(bus.getRegisteredAgents()).toHaveLength(0);
+      expect(bus.listTasks()).toHaveLength(0);
+    });
+  });
+});
