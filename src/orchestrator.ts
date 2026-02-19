@@ -52,7 +52,7 @@ export class Orchestrator {
     };
     this.client = new CopilotClient();
     this.bus = new MessageBus();
-    this.tmux = new TmuxManager((level, msg) => this.log(level as any, msg));
+    this.tmux = new TmuxManager((level, msg) => this.log(level, msg));
   }
 
   /** Whether tmux multi-pane mode is active */
@@ -87,8 +87,8 @@ export class Orchestrator {
     for (const agent of this.agents.values()) {
       try {
         await agent.session.destroy();
-      } catch (e: any) {
-        errors.push(e);
+      } catch (e: unknown) {
+        errors.push(e instanceof Error ? e : new Error(String(e)));
       }
     }
     this.agents.clear();
@@ -193,7 +193,7 @@ export class Orchestrator {
         content: buildSystemMessage(info, teamSize),
       },
       streaming: this.config.streaming,
-    } as any);
+    });
 
     const agent: ManagedAgent = {
       info,
@@ -214,13 +214,9 @@ export class Orchestrator {
     let atLineStart = true;
     const prefix = `\x1b[35m[${info.name}]\x1b[0m `;
 
-    session.on("assistant.message_delta", (event: any) => {
+    session.on("assistant.message_delta", (event) => {
       if (this.config.streaming) {
-        const delta =
-          event?.data?.deltaContent ??
-          event?.delta?.content ??
-          event?.content ??
-          (typeof event === "string" ? event : "");
+        const delta = event.data.deltaContent;
         if (delta) {
           if (hasTmuxPane) {
             // Route to dedicated tmux pane — main pane stays clean
@@ -350,7 +346,7 @@ export class Orchestrator {
     if (agent.busy) {
       this.log("info", `[${agent.info.name}] busy, enqueueing message`);
       // Enqueue using the SDK's enqueue mode
-      await agent.session.send({ prompt, mode: "enqueue" } as any);
+      await agent.session.send({ prompt, mode: "enqueue" });
       return;
     }
 
@@ -368,10 +364,11 @@ export class Orchestrator {
     }
     try {
       await agent.session.sendAndWait({ prompt });
-    } catch (err: any) {
-      this.log("error", `[${agent.info.name}] Error: ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log("error", `[${agent.info.name}] Error: ${message}`);
       if (this.tmux.hasPane(agent.info.id)) {
-        this.tmux.writeStatus(agent.info.id, "idle", err.message);
+        this.tmux.writeStatus(agent.info.id, "idle", message);
       }
     } finally {
       agent.busy = false;

@@ -42,14 +42,17 @@ function roleColor(role: string): string {
 
 // ── TmuxManager ────────────────────────────────────────────────────
 
+/** Log level type shared with Orchestrator */
+export type LogLevel = "info" | "debug" | "warn" | "error";
+
 export class TmuxManager {
   private panes = new Map<string, AgentPane>();
   private _available: boolean;
   private tmpDir: string;
-  private onLog: (level: string, msg: string) => void;
+  private onLog: (level: LogLevel, msg: string) => void;
   private borderConfigured = false;
 
-  constructor(onLog?: (level: string, msg: string) => void) {
+  constructor(onLog?: (level: LogLevel, msg: string) => void) {
     this.onLog = onLog ?? (() => {});
     this._available = this.detectTmux();
     this.tmpDir = path.join(os.tmpdir(), `copilot-agent-teams-${process.pid}`);
