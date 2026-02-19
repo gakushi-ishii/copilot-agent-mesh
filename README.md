@@ -1,8 +1,8 @@
-# Copilot Agent Teams
+# Copilot Agent Mesh
 
 複数の GitHub Copilot セッションを協調させ、エージェント同士が双方向にメッセージをやり取りしながらタスクを遂行する、マルチエージェントオーケストレーションの PoC（概念実証）です。
 
-[`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk) の複数セッション管理機能を活用し、インメモリのメッセージバスとカスタムツール注入によって、Claude Code の Agent Teams に類似した Lead + Teammates パターンを実現します。単方向のサブエージェントとは異なり、チームメイト同士がメールボックスを通じて直接対話できる点が特徴です。
+[`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk) の複数セッション管理機能を活用し、インメモリのメッセージバスとカスタムツール注入によって、Lead + Teammates パターンのマルチエージェント協調システムを実現します。単方向のサブエージェントとは異なり、チームメイト同士がメールボックスを通じて直接対話できる点が特徴です。
 
 ## 目次
 
@@ -31,8 +31,8 @@
 1. リポジトリをクローンします。
 
    ```bash
-   git clone https://github.com/gakushi-ishii/copilot-agent-teams.git
-   cd copilot-agent-teams
+   git clone https://github.com/gakushi-ishii/copilot-agent-mesh.git
+   cd copilot-agent-mesh
    ```
 
 2. 依存パッケージをインストールします。

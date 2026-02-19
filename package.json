@@ -1,5 +1,5 @@
 {
-  "name": "copilot-agent-teams",
+  "name": "copilot-agent-mesh",
   "version": "1.0.0",
   "description": "",
   "type": "module",
@@ -12,15 +12,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gakushi-ishii/copilot-agent-teams.git"
+    "url": "git+https://github.com/gakushi-ishii/copilot-agent-mesh.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/gakushi-ishii/copilot-agent-teams/issues"
+    "url": "https://github.com/gakushi-ishii/copilot-agent-mesh/issues"
   },
-  "homepage": "https://github.com/gakushi-ishii/copilot-agent-teams#readme",
+  "homepage": "https://github.com/gakushi-ishii/copilot-agent-mesh#readme",
   "dependencies": {
     "@github/copilot-sdk": "^0.1.25",
     "zod": "^4.3.6"
