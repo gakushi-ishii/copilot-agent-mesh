@@ -18,7 +18,7 @@ import * as readline from "node:readline";
 
 const MODEL = process.env.COPILOT_MODEL ?? "claude-opus-4.6";
 const POLL_MS = Number(process.env.POLL_INTERVAL_MS ?? 2000);
-const LOG_LEVEL = process.env.LOG_LEVEL ?? "info";
+const DEBUG = process.argv.includes("--debug") || process.env.LOG_LEVEL === "debug";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -26,6 +26,9 @@ const LOG_LEVEL = process.env.LOG_LEVEL ?? "info";
 let tmuxMode = false;
 
 function log(level: string, msg: string) {
+  // Unless --debug is set, suppress all bracket-tagged log lines
+  if (!DEBUG) return;
+
   const ts = new Date().toISOString().slice(11, 19);
   const color =
     level === "error"
@@ -35,12 +38,10 @@ function log(level: string, msg: string) {
         : level === "debug"
           ? "\x1b[90m"
           : "\x1b[36m";
-  if (level === "debug" && LOG_LEVEL !== "debug") return;
 
   // In tmux mode, suppress noisy info logs in the main pane —
   // only show warnings, errors, and key lifecycle events.
   if (tmuxMode && level === "info") {
-    // Allow through important lifecycle messages only
     if (
       !msg.includes("spawned") &&
       !msg.includes("shut down") &&
@@ -95,6 +96,9 @@ async function interactiveMode(orch: Orchestrator) {
   console.error("\x1b[0m");
   console.error(`Lead Model    : \x1b[35m${MODEL}\x1b[0m`);
   console.error(`Default Model : \x1b[34mclaude-sonnet-4.6\x1b[0m \x1b[90m(Lead can override per teammate)\x1b[0m`);
+  if (DEBUG) {
+    console.error(`Debug Mode    : \x1b[33menabled\x1b[0m`);
+  }
   if (tmux) {
     console.error(
       "\x1b[32m✓ tmux detected — each agent gets its own pane\x1b[0m",
@@ -216,6 +220,10 @@ async function main() {
   const args = process.argv.slice(2);
   const taskFlag = args.indexOf("--task");
   const task = taskFlag !== -1 ? args[taskFlag + 1] : undefined;
+
+  if (DEBUG) {
+    log("info", "Debug logging enabled (--debug or LOG_LEVEL=debug)");
+  }
 
   const orch = new Orchestrator({
     model: MODEL,
