@@ -21,15 +21,35 @@ export interface ManagedAgent {
   session: CopilotSession;
   /** Whether this agent is currently processing a turn */
   busy: boolean;
-  /** Polling interval handle */
-  pollHandle?: ReturnType<typeof setInterval>;
 }
 
 /**
  * Generates the system message for a given agent role.
+ *
+ * @param language  BCP-47 language tag (e.g. "ja", "en") detected from the
+ *                  user's input. When provided, a strong language-matching
+ *                  directive is prepended to keep all agent communication
+ *                  in the same language as the user.
  */
-export function buildSystemMessage(agent: AgentInfo, teamSize: number): string {
-  const common = `
+export function buildSystemMessage(agent: AgentInfo, teamSize: number, language?: string): string {
+  // ── Language enforcement directive ──────────────────────────────
+  const langDirective = language && language !== "en"
+    ? `
+## ⚠️ LANGUAGE RULE — CRITICAL
+The user's request is written in **${language}**.
+You MUST use **${language}** for ALL of the following:
+- Your own reasoning and final answers
+- Task descriptions you create (create_task)
+- Messages you send to teammates (send_message / broadcast)
+- Instructions when spawning new teammates (spawn_teammate prompt)
+- Any other text output
+
+Do NOT switch to English unless the user explicitly asks for English.
+This rule overrides all other language preferences.
+`
+    : "";
+
+  const common = `${langDirective}
 You are "${agent.name}" (id: ${agent.id}), a member of an AI agent team.
 Your role: ${agent.role}${agent.specialty ? ` — ${agent.specialty}` : ""}.
 Team size: ${teamSize} agents.

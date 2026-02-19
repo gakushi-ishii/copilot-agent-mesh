@@ -4,6 +4,10 @@
  *
  * This is the "glue" that makes bidirectional multi-agent communication
  * possible on top of the Copilot SDK's multi-session support.
+ *
+ * Message polling and streaming output routing are handled by
+ * dedicated classes (MessagePoller, OutputRouter) injected at
+ * construction time (ar-1).
  */
 import { CopilotClient } from "@github/copilot-sdk";
 import { MessageBus } from "./message-bus.js";
@@ -11,11 +15,12 @@ import { createAgentTools, createLeadTools, type ToolLogger } from "./agent-tool
 import {
   buildSystemMessage,
   type AgentInfo,
-  type AgentRole,
   type ManagedAgent,
 } from "./agent-session.js";
 import { TmuxManager } from "./tmux-pane.js";
-import { DEFAULT_LEAD_MODEL, DEFAULT_TEAMMATE_MODEL } from "./constants.js";
+import { DEFAULT_LEAD_MODEL, DEFAULT_TEAMMATE_MODEL, detectLanguage, languageDisplayName } from "./constants.js";
+import { MessagePoller } from "./message-poller.js";
+import { OutputRouter, TmuxOutputSink, StdoutOutputSink } from "./output-router.js";
 
 export interface OrchestratorConfig {
   /** Model to use for the Lead / default (default: DEFAULT_LEAD_MODEL) */
@@ -26,6 +31,12 @@ export interface OrchestratorConfig {
   streaming?: boolean;
   /** Maximum turns per agent before forced stop (default: 20) */
   maxTurnsPerAgent?: number;
+  /**
+   * BCP-47 language tag to enforce across all agents (e.g. "ja", "en").
+   * When set to "auto" (default), language is detected from the first
+   * user prompt submitted via submitTask().
+   */
+  language?: string;
   /** Log callback for debug output */
   onLog?: (level: "info" | "debug" | "warn" | "error", msg: string) => void;
 }
@@ -36,11 +47,18 @@ export class Orchestrator {
   private agents = new Map<string, ManagedAgent>();
   private config: Required<OrchestratorConfig>;
   private agentCounter = 0;
+  /** Detected / configured language for the session */
+  private language: string | undefined;
+  /** @deprecated Dead after DI extraction — use poller.running instead */
   private running = false;
   /** Per-agent turn counter for loop prevention */
   private turnCounts = new Map<string, number>();
-  /** tmux pane manager for per-agent output isolation */
+  /** tmux pane manager — retained for isTmuxMode check & main pane title */
   private tmux: TmuxManager;
+  /** Handles per-agent message polling */
+  private poller: MessagePoller;
+  /** Routes streaming output to the appropriate sink */
+  private router: OutputRouter;
 
   constructor(config?: OrchestratorConfig) {
     this.config = {
@@ -48,16 +66,44 @@ export class Orchestrator {
       pollIntervalMs: config?.pollIntervalMs ?? 2000,
       streaming: config?.streaming ?? true,
       maxTurnsPerAgent: config?.maxTurnsPerAgent ?? 20,
+      language: config?.language ?? "auto",
       onLog: config?.onLog ?? (() => {}),
     };
+    // Pre-set language if explicitly configured (not "auto")
+    if (this.config.language !== "auto") {
+      this.language = this.config.language;
+    }
     this.client = new CopilotClient();
     this.bus = new MessageBus();
     this.tmux = new TmuxManager((level, msg) => this.log(level, msg));
+
+    // Initialise extracted components via DI
+    const logFn = (level: "info" | "debug" | "warn" | "error", msg: string) =>
+      this.log(level, msg);
+
+    this.poller = new MessagePoller(
+      this.bus,
+      {
+        pollIntervalMs: this.config.pollIntervalMs,
+        log: logFn,
+      },
+      (agent, prompt) => this.sendToAgent(agent, prompt),
+    );
+
+    const sink = this.tmux.isAvailable
+      ? new TmuxOutputSink(this.tmux)
+      : new StdoutOutputSink();
+    this.router = new OutputRouter(sink, this.config.streaming, logFn);
   }
 
   /** Whether tmux multi-pane mode is active */
   get isTmuxMode(): boolean {
     return this.tmux.isAvailable;
+  }
+
+  /** The detected / configured language for the session */
+  get sessionLanguage(): string | undefined {
+    return this.language;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
@@ -78,9 +124,7 @@ export class Orchestrator {
     this.log("info", "Shutting down all agents...");
 
     // Stop all polling
-    for (const agent of this.agents.values()) {
-      if (agent.pollHandle) clearInterval(agent.pollHandle);
-    }
+    this.poller.stopAll();
 
     // Destroy all sessions
     const errors: Error[] = [];
@@ -94,8 +138,8 @@ export class Orchestrator {
     this.agents.clear();
     this.turnCounts.clear();
 
-    // Clean up tmux panes
-    this.tmux.closeAll();
+    // Clean up output channels (tmux panes etc.)
+    this.router.closeAll();
 
     await this.client.stop();
     this.bus.reset();
@@ -137,11 +181,22 @@ export class Orchestrator {
 
     const agent = await this.createAgent(info, selectedModel);
 
+    // Prepend a language enforcement hint when the session language is non-English.
+    // This ensures each teammate operates in the user's language even if the
+    // Lead accidentally wrote the spawn prompt in English.
+    let effectivePrompt = initialPrompt;
+    if (this.language && this.language !== "en") {
+      effectivePrompt =
+        `[SYSTEM] You MUST respond and work entirely in ${languageDisplayName(this.language)}. ` +
+        `All output, messages, and task results MUST be in ${languageDisplayName(this.language)}.\n\n` +
+        initialPrompt;
+    }
+
     // Fire-and-forget: send the initial prompt without blocking the caller.
     // This prevents the Lead's sendAndWait timeout from including the
     // teammate's entire processing time.
     this.log("info", `Teammate "${name}" spawned. Sending initial prompt (async)...`);
-    this.sendToAgent(agent, initialPrompt).catch((err: unknown) => {
+    this.sendToAgent(agent, effectivePrompt).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       this.log("error", `[${info.name}] initial prompt failed: ${message}`);
       // Notify the Lead so the task doesn't silently stall
@@ -190,7 +245,7 @@ export class Orchestrator {
       model: resolvedModel,
       tools,
       systemMessage: {
-        content: buildSystemMessage(info, teamSize),
+        content: buildSystemMessage(info, teamSize, this.language),
       },
       streaming: this.config.streaming,
     });
@@ -203,57 +258,16 @@ export class Orchestrator {
 
     this.agents.set(info.id, agent);
 
-    // Create a tmux pane for ALL agents (including lead) when tmux is available.
-    // The main pane stays clean and interactive — only structured notifications.
+    // Create an output channel for this agent (tmux pane when available)
     if (this.tmux.isAvailable) {
-      this.tmux.createPane(info.id, info.name, info.specialty ?? info.role, resolvedModel);
+      this.router.createChannel(info.id, info.name, info.specialty ?? info.role, resolvedModel);
     }
 
-    // Set up streaming output — route everything to tmux panes when available
-    const hasTmuxPane = this.tmux.hasPane(info.id);
-    let atLineStart = true;
-    const prefix = `\x1b[35m[${info.name}]\x1b[0m `;
+    // Attach streaming listeners — delegated to OutputRouter
+    this.router.attachStreamingListeners(session, info);
 
-    session.on("assistant.message_delta", (event) => {
-      if (this.config.streaming) {
-        const delta = event.data.deltaContent;
-        if (delta) {
-          if (hasTmuxPane) {
-            // Route to dedicated tmux pane — main pane stays clean
-            this.tmux.write(info.id, delta);
-          } else {
-            // Fallback (no tmux): write to stdout with prefix
-            let output = "";
-            for (const ch of delta) {
-              if (atLineStart) {
-                output += prefix;
-                atLineStart = false;
-              }
-              output += ch;
-              if (ch === "\n") {
-                atLineStart = true;
-              }
-            }
-            process.stdout.write(output);
-          }
-        }
-      }
-    });
-
-    session.on("assistant.message", () => {
-      if (this.config.streaming) {
-        if (hasTmuxPane) {
-          this.tmux.write(info.id, "\n");
-        } else {
-          process.stdout.write("\n");
-          atLineStart = true;
-        }
-      }
-      this.log("info", `[${info.name}] turn complete`);
-    });
-
-    // Start message polling for this agent
-    this.startMessagePolling(agent);
+    // Start message polling for this agent — delegated to MessagePoller
+    this.poller.startPolling(agent);
 
     this.log("info", `Agent "${info.name}" (${info.id}) created.`);
     return agent;
@@ -265,69 +279,17 @@ export class Orchestrator {
     if (agent.info.role === "lead")
       throw new Error("Cannot shut down the lead agent");
 
-    if (agent.pollHandle) clearInterval(agent.pollHandle);
+    this.poller.stopPolling(agentId);
     await agent.session.destroy();
     this.bus.unregisterAgent(agentId);
     this.agents.delete(agentId);
     this.turnCounts.delete(agentId);
-    // Close the tmux pane if it exists
-    if (this.tmux.hasPane(agentId)) {
-      this.tmux.closePane(agentId);
-    }
+    // Close the output channel (tmux pane etc.)
+    this.router.closeChannel(agentId);
     this.log("info", `Agent "${agent.info.name}" shut down.`);
   }
 
-  // ── Message Delivery Loop ─────────────────────────────────────
-
-  /**
-   * The core bidirectional communication mechanism:
-   * Periodically check each agent's mailbox. If there are unread messages,
-   * inject them as a new prompt into the agent's session.
-   */
-  private startMessagePolling(agent: ManagedAgent): void {
-    agent.pollHandle = setInterval(async () => {
-      if (!this.running || agent.busy) return;
-
-      // Check turn limit
-      const turns = this.turnCounts.get(agent.info.id) ?? 0;
-      if (turns >= this.config.maxTurnsPerAgent) {
-        this.log(
-          "warn",
-          `[${agent.info.name}] reached max turns (${this.config.maxTurnsPerAgent}), skipping further messages`,
-        );
-        return;
-      }
-
-      if (this.bus.hasUnreadMessages(agent.info.id)) {
-        const msgs = this.bus.readMessages(agent.info.id);
-        if (msgs.length === 0) return;
-
-        // Log each delivered message for visibility
-        for (const m of msgs) {
-          this.log(
-            "info",
-            `📨 Delivering message to [${agent.info.name}] from [${m.from}]: ${m.content.slice(0, 100)}`,
-          );
-        }
-
-        const formatted = msgs
-          .map(
-            (m) =>
-              `[Message from ${m.from}]: ${m.content}`,
-          )
-          .join("\n\n");
-
-        const prompt = `You have ${msgs.length} new message(s) from teammates:\n\n${formatted}\n\nPlease read and respond appropriately. If any action is needed, take it. Then check your task list.`;
-
-        try {
-          await this.sendToAgent(agent, prompt);
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.log("error", `[${agent.info.name}] message polling failed: ${message}`);
-        }
-      }
-    }, this.config.pollIntervalMs);
-  }
+  // ── Agent Communication ────────────────────────────────────────
 
   /**
    * Send a prompt to an agent's session, with busy-state tracking.
@@ -357,26 +319,20 @@ export class Orchestrator {
     );
 
     agent.busy = true;
-    // Update tmux pane title to show BUSY state
-    if (this.tmux.hasPane(agent.info.id)) {
-      this.tmux.updatePaneTitle(agent.info.id, "⏳", agent.info.model);
-      this.tmux.writeStatus(agent.info.id, "working", `turn ${turns + 1}`);
-    }
     try {
+      // Update output channel title to show BUSY state (inside try to prevent busy-stuck)
+      this.router.updateTitle(agent.info.id, "⏳", agent.info.model);
+      this.router.writeStatus(agent.info.id, "working", `turn ${turns + 1}`);
       await agent.session.sendAndWait({ prompt });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.log("error", `[${agent.info.name}] Error: ${message}`);
-      if (this.tmux.hasPane(agent.info.id)) {
-        this.tmux.writeStatus(agent.info.id, "idle", message);
-      }
+      this.router.writeStatus(agent.info.id, "idle", message);
     } finally {
       agent.busy = false;
-      // Update tmux pane title back to idle
-      if (this.tmux.hasPane(agent.info.id)) {
-        this.tmux.updatePaneTitle(agent.info.id, undefined, agent.info.model);
-        this.tmux.writeStatus(agent.info.id, "idle");
-      }
+      // Update output channel title back to idle
+      this.router.updateTitle(agent.info.id, undefined, agent.info.model);
+      this.router.writeStatus(agent.info.id, "idle");
     }
   }
 
@@ -389,8 +345,30 @@ export class Orchestrator {
     const lead = this.agents.get("lead");
     if (!lead) throw new Error("Lead agent not created. Call createLead() first.");
 
+    // Auto-detect language from the first user prompt if not yet set
+    if (!this.language && this.config.language === "auto") {
+      this.language = detectLanguage(prompt);
+      this.log(
+        "info",
+        `Detected input language: ${languageDisplayName(this.language)} (${this.language})`,
+      );
+    }
+
+    // Prepend a language enforcement hint to the prompt when the session
+    // language is non-English.  Previously this was sent as a separate
+    // enqueued message, which caused the Lead to process the hint alone
+    // (without any task) and reply with a generic greeting.
+    let effectivePrompt = prompt;
+    if (this.language && this.language !== "en") {
+      const langHint =
+        `[SYSTEM] The user is communicating in ${languageDisplayName(this.language)}. ` +
+        `You MUST respond, delegate tasks, and communicate with all teammates in the SAME language. ` +
+        `All task descriptions, spawn_teammate prompts, and messages MUST be in ${languageDisplayName(this.language)}.\n\n`;
+      effectivePrompt = langHint + prompt;
+    }
+
     this.log("info", `Submitting task to lead: "${prompt.slice(0, 80)}..."`);
-    await this.sendToAgent(lead, prompt);
+    await this.sendToAgent(lead, effectivePrompt);
   }
 
   /**

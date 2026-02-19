@@ -13,13 +13,14 @@ import {
   notifyTaskCompleted,
 } from "./progress-display.js";
 import * as readline from "node:readline";
-import { DEFAULT_LEAD_MODEL, DEFAULT_TEAMMATE_MODEL } from "./constants.js";
+import { DEFAULT_LEAD_MODEL, DEFAULT_TEAMMATE_MODEL, languageDisplayName } from "./constants.js";
 
 // ── Configuration ──────────────────────────────────────────────────
 
 const MODEL = process.env.COPILOT_MODEL ?? DEFAULT_LEAD_MODEL;
 const POLL_MS = Number(process.env.POLL_INTERVAL_MS ?? 2000);
 const DEBUG = process.argv.includes("--debug") || process.env.LOG_LEVEL === "debug";
+const LANGUAGE = process.env.COPILOT_LANGUAGE ?? "auto";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -100,6 +101,7 @@ async function interactiveMode(orch: Orchestrator) {
   console.error("\x1b[0m");
   console.error(`Lead Model    : \x1b[35m${MODEL}\x1b[0m`);
   console.error(`Default Model : \x1b[34m${DEFAULT_TEAMMATE_MODEL}\x1b[0m \x1b[90m(Lead can override per teammate)\x1b[0m`);
+  console.error(`Language      : \x1b[36m${LANGUAGE === "auto" ? "auto-detect" : languageDisplayName(LANGUAGE)}\x1b[0m`);
   if (DEBUG) {
     console.error(`Debug Mode    : \x1b[33menabled\x1b[0m`);
   }
@@ -236,6 +238,7 @@ async function main() {
     model: MODEL,
     pollIntervalMs: POLL_MS,
     streaming: true,
+    language: LANGUAGE,
     onLog: log,
   });
 
