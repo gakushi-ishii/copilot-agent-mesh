@@ -54,6 +54,7 @@ export async function checkGitHubCliAuth(log: (level: "info" | "debug" | "warn" 
     throw new Error(
       `GitHub CLI is not authenticated. Please run 'gh auth login' first.\n` +
       `Detail: ${stderr || message}`,
+      { cause: err },
     );
   }
 
