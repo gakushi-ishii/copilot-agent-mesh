@@ -338,6 +338,34 @@ COPILOT_MODEL=claude-sonnet-4.6 LOG_LEVEL=debug npm start
 > [!NOTE]
 > The `--debug` CLI flag is equivalent to setting `LOG_LEVEL=debug`.
 
+## Troubleshooting
+
+### GitHub Copilot extension not available in DevContainer
+
+If the GitHub Copilot extension is not automatically installed inside the DevContainer, add `GitHub.copilot` to your VS Code user setting **Dev > Containers: Default Extensions** (`dev.containers.defaultExtensions`):
+
+1. Open VS Code Settings (`Ctrl+,` / `Cmd+,`).
+2. Search for `dev.containers.defaultExtensions`.
+3. Click **Add Item** and enter `GitHub.copilot`.
+
+This ensures the Copilot extension is always installed in every DevContainer, regardless of the `devcontainer.json` configuration.
+
+### `gh auth login` works but `npm start` fails in tmux
+
+When using `docker exec` to connect to the DevContainer, you may be logged in as `root` while `gh auth login` was performed as the `node` user. The GitHub CLI configuration is stored per user, so `root` cannot see the `node` user's authentication.
+
+**Fix:** The DevContainer's `postCreateCommand` automatically creates a symlink from `/root/.config/gh` to `/home/node/.config/gh`. If this symlink is missing (e.g., on older containers), run:
+
+```bash
+sudo mkdir -p /root/.config && sudo ln -sfn /home/node/.config/gh /root/.config/gh
+```
+
+Alternatively, connect as the `node` user:
+
+```bash
+docker exec -it -u node "$CONTAINER_ID" bash
+```
+
 ## License
 
 ISC
