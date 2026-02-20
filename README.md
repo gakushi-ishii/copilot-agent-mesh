@@ -43,6 +43,44 @@ Built on [`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-s
 
 ## Installation
 
+### Option A: DevContainer (Recommended)
+
+The easiest way to get started, especially on Windows. The DevContainer includes Node.js, tmux, and GitHub CLI pre-configured.
+
+**From VSCode:**
+
+1. Install the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension.
+2. Open the repository folder in VSCode.
+3. Press `F1` → **Dev Containers: Reopen in Container**.
+4. The container builds automatically with all dependencies.
+
+**From an external terminal (full tmux experience):**
+
+After the DevContainer is running, connect from any terminal emulator:
+
+```bash
+# Find the running container
+docker ps --filter "label=devcontainer.local_folder" --format "table {{.Names}}\t{{.ID}}"
+
+# Attach with an interactive shell, then start tmux
+docker exec -it <container-name> bash -c "cd /workspaces/copilot-agent-mesh && exec bash"
+tmux new-session -s mesh
+npm start
+```
+
+> [!TIP]
+> If you prefer the full tmux experience with a dedicated terminal (e.g., Windows Terminal, iTerm2), use `docker exec` to connect to the DevContainer. The VSCode integrated terminal also supports tmux, but an external terminal may feel more natural for heavy tmux usage.
+
+**Without VSCode (using `devcontainer` CLI):**
+
+```bash
+npm install -g @devcontainers/cli
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . bash
+```
+
+### Option B: Local Setup
+
 1. Clone the repository.
 
    ```bash
@@ -67,6 +105,9 @@ Built on [`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-s
    ```bash
    npm run build
    ```
+
+> [!NOTE]
+> On Windows, tmux requires WSL. Install WSL 2 and run the application inside your WSL distribution.
 
 ## Get Started
 
