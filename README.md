@@ -32,7 +32,7 @@ Built on [`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-s
 |-------------|---------|
 | Node.js | 18 or later |
 | GitHub Copilot CLI | Latest |
-| GitHub Copilot License | Active subscription |
+| GitHub Copilot License | **Enterprise** (premium models require Enterprise plan) |
 | tmux (optional) | Any recent version |
 
 > [!NOTE]
@@ -40,6 +40,9 @@ Built on [`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-s
 
 > [!NOTE]
 > tmux is optional but strongly recommended. When running inside tmux, each agent gets its own pane with a persistent border title showing the agent name, role, and model.
+
+> [!WARNING]
+> This project uses premium models (`claude-opus-4.6`, `claude-sonnet-4.6`) by default. Premium model usage consumes your organization's monthly Premium Requests quota. To reduce consumption, override the Lead model via the `COPILOT_MODEL` environment variable (e.g., `COPILOT_MODEL=claude-haiku-3.5`).
 
 ## Installation
 
@@ -137,9 +140,9 @@ The Lead agent selects the best model for each teammate at spawn time. This enab
 
 | Model | Best For |
 |-------|----------|
-| `claude-opus-4.6` | Complex multi-step reasoning, architecture, security |
-| `claude-sonnet-4.6` | Code generation, review, testing, analysis (default for teammates) |
-| `gpt-5.3-codex` | Large-scale code generation, multi-file refactoring |
+| `claude-opus-4.6` | Complex multi-step reasoning, architecture, security (premium) |
+| `claude-sonnet-4.6` | Code generation, review, testing, analysis (premium, default for teammates) |
+| `gpt-5.3-codex` | Large-scale code generation, multi-file refactoring (premium) |
 | `claude-haiku-3.5` | Documentation, formatting, translation, simple tasks |
 
 The Lead runs on `claude-opus-4.6` by default. Teammates default to `claude-sonnet-4.6` unless the Lead specifies otherwise.
