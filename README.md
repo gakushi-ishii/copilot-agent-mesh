@@ -53,17 +53,25 @@ The easiest way to get started, especially on Windows. The DevContainer includes
 2. Open the repository folder in VSCode.
 3. Press `F1` → **Dev Containers: Reopen in Container**.
 4. The container builds automatically with all dependencies.
+5. Authenticate with GitHub CLI (required on first use):
+
+   ```bash
+   gh auth login
+   ```
+
+   > [!IMPORTANT]
+   > `@github/copilot-sdk` requires an authenticated GitHub CLI session with an active Copilot license. The `gh-copilot` extension is installed automatically by the DevContainer, but you must run `gh auth login` once after the container is created.
 
 **From an external terminal (full tmux experience):**
 
 After the DevContainer is running, connect from any terminal emulator:
 
 ```bash
-# Find the running container
-docker ps --filter "label=devcontainer.local_folder" --format "table {{.Names}}\t{{.ID}}"
+# Store the container ID in an environment variable
+export CONTAINER_ID=$(docker ps --filter "label=devcontainer.local_folder" -q)
 
 # Attach with an interactive shell, then start tmux
-docker exec -it <container-name> bash -c "cd /workspaces/copilot-agent-mesh && exec bash"
+docker exec -it "$CONTAINER_ID" bash -c "cd /workspaces/copilot-agent-mesh && exec bash"
 tmux new-session -s mesh
 npm start
 ```
@@ -94,13 +102,20 @@ devcontainer exec --workspace-folder . bash
    npm install
    ```
 
-3. Verify that the GitHub Copilot CLI is available on your PATH.
+3. Install the GitHub Copilot CLI extension and authenticate.
 
    ```bash
-   copilot --version
+   gh extension install github/gh-copilot
+   gh auth login
    ```
 
-4. Build TypeScript (optional — you can run directly with `tsx`).
+4. Verify that the GitHub Copilot CLI is available on your PATH.
+
+   ```bash
+   gh copilot --version
+   ```
+
+5. Build TypeScript (optional — you can run directly with `tsx`).
 
    ```bash
    npm run build
