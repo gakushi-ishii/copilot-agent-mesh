@@ -255,7 +255,30 @@ async function main() {
       await interactiveMode(orch);
     }
   } catch (err: any) {
-    log("error", `Fatal: ${err.message}`);
+    const message = err.message ?? String(err);
+    log("error", `Fatal: ${message}`);
+
+    // Show user-friendly auth error banner (always visible, not gated by --debug)
+    if (
+      message.includes("gh auth login") ||
+      message.includes("authentication") ||
+      message.includes("auth") ||
+      message.includes("401") ||
+      message.includes("timed out")
+    ) {
+      console.error("\n\x1b[31m╔══════════════════════════════════════════════════════════╗");
+      console.error("║  GitHub CLI Authentication Error                         ║");
+      console.error("╠══════════════════════════════════════════════════════════╣");
+      console.error("║  The Copilot SDK could not authenticate via GitHub CLI.  ║");
+      console.error("║                                                          ║");
+      console.error("║  Fix:                                                    ║");
+      console.error("║    1. Run: gh auth login                                 ║");
+      console.error("║    2. Ensure the token has 'copilot' scope               ║");
+      console.error("║    3. Verify: gh auth status                             ║");
+      console.error("║    4. Restart this application                           ║");
+      console.error("╚══════════════════════════════════════════════════════════╝\x1b[0m\n");
+    }
+
     await orch.stop().catch((stopErr: unknown) => {
       const msg = stopErr instanceof Error ? stopErr.message : String(stopErr);
       log("error", `Cleanup failed during fatal shutdown: ${msg}`);

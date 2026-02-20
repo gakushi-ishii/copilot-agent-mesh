@@ -21,6 +21,63 @@ import { TmuxManager } from "./tmux-pane.js";
 import { DEFAULT_LEAD_MODEL, DEFAULT_TEAMMATE_MODEL, detectLanguage, languageDisplayName } from "./constants.js";
 import { MessagePoller } from "./message-poller.js";
 import { OutputRouter, TmuxOutputSink, StdoutOutputSink } from "./output-router.js";
+import { execFile } from "node:child_process";
+
+/**
+ * Verify that the GitHub CLI is authenticated.
+ * Throws a descriptive error when `gh auth status` reports a problem.
+ */
+export async function checkGitHubCliAuth(log: (level: "info" | "debug" | "warn" | "error", msg: string) => void): Promise<void> {
+  let result: { stdout: string; stderr: string };
+  try {
+    result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      execFile("gh", ["auth", "status"], { timeout: 10_000 }, (error, stdout, stderr) => {
+        if (error) {
+          const err = error as Error & { stderr?: string };
+          err.stderr = typeof stderr === "string" ? stderr : "";
+          reject(err);
+        } else {
+          resolve({
+            stdout: typeof stdout === "string" ? stdout : String(stdout),
+            stderr: typeof stderr === "string" ? stderr : String(stderr),
+          });
+        }
+      });
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stderr = (err as { stderr?: string })?.stderr ?? "";
+    log("error", `GitHub CLI authentication check failed: ${message}`);
+    if (stderr) {
+      log("error", `gh auth status stderr: ${stderr.trim()}`);
+    }
+    throw new Error(
+      `GitHub CLI is not authenticated. Please run 'gh auth login' first.\n` +
+      `Detail: ${stderr || message}`,
+      { cause: err },
+    );
+  }
+
+  // gh auth status prints to stderr on success
+  const output = (result.stdout + result.stderr).trim();
+  if (output.includes("not logged") || output.includes("authentication")) {
+    log("debug", `gh auth status output: ${output}`);
+  }
+  log("info", "GitHub CLI authentication verified.");
+}
+
+/** Race a promise against a timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms / 1000}s — this often indicates a GitHub CLI authentication problem. Run 'gh auth status' to check.`));
+    }, ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 export interface OrchestratorConfig {
   /** Model to use for the Lead / default (default: DEFAULT_LEAD_MODEL) */
@@ -109,8 +166,18 @@ export class Orchestrator {
   // ── Lifecycle ───────────────────────────────────────────────────
 
   async start(): Promise<void> {
+    // Pre-flight: verify GitHub CLI authentication before touching the SDK
+    await checkGitHubCliAuth((level, msg) => this.log(level, msg));
+
     this.log("info", "Starting Copilot client...");
-    await this.client.start();
+    try {
+      await withTimeout(this.client.start(), 30_000, "CopilotClient.start()");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log("error", `Failed to start Copilot client: ${message}`);
+      this.log("error", "Hint: Ensure 'gh auth login' has been completed and your token has the 'copilot' scope.");
+      throw err;
+    }
     this.running = true;
     // Set the main pane's tmux title
     if (this.tmux.isAvailable) {
@@ -241,14 +308,28 @@ export class Orchestrator {
           ]
         : baseTools;
 
-    const session = await this.client.createSession({
-      model: resolvedModel,
-      tools,
-      systemMessage: {
-        content: buildSystemMessage(info, teamSize, this.language),
-      },
-      streaming: this.config.streaming,
-    });
+    let session;
+    try {
+      session = await withTimeout(
+        this.client.createSession({
+          model: resolvedModel,
+          tools,
+          systemMessage: {
+            content: buildSystemMessage(info, teamSize, this.language),
+          },
+          streaming: this.config.streaming,
+        }),
+        30_000,
+        `createSession(${info.name})`,
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log("error", `Failed to create session for agent "${info.name}": ${message}`);
+      if (message.includes("401") || message.includes("auth") || message.includes("token") || message.includes("timed out")) {
+        this.log("error", "This may be a GitHub CLI authentication issue. Run 'gh auth status' to verify.");
+      }
+      throw err;
+    }
 
     const agent: ManagedAgent = {
       info,
@@ -327,6 +408,9 @@ export class Orchestrator {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.log("error", `[${agent.info.name}] Error: ${message}`);
+      if (message.includes("401") || message.includes("auth") || message.includes("token") || message.includes("403")) {
+        this.log("error", `[${agent.info.name}] Authentication error detected. Run 'gh auth login' and restart the application.`);
+      }
       this.router.writeStatus(agent.info.id, "idle", message);
     } finally {
       agent.busy = false;
